@@ -18,7 +18,10 @@ class Settings:
                 "BANK_DATABASE_URL",
                 "postgresql+psycopg://futureledger:futureledger@localhost:5432/futureledger_bank",
             ),
-            service_token=os.environ.get("BANK_SERVICE_TOKEN", "local-bank-service-token"),
+            service_token=os.environ.get(
+                "FUTURELEDGER_INTERNAL_TOKEN",
+                os.environ.get("BANK_SERVICE_TOKEN", "local-bank-service-token"),
+            ),
             quote_ttl_seconds=int(os.environ.get("BANK_QUOTE_TTL_SECONDS", "300")),
             environment=os.environ.get(
                 "FUTURELEDGER_ENV",

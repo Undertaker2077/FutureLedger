@@ -49,9 +49,10 @@ class TransactionQuery(StrictContract):
     account_id: StrictStr | None = None
     cursor: StrictStr | None = None
     limit: StrictInt = Field(default=50, ge=1, le=100)
-    from_time: datetime | None = None
-    to_time: datetime | None = None
-    direction: Literal["CREDIT", "DEBIT"] | None = None
+    start: datetime | None = None
+    end_exclusive: datetime | None = None
+    status: Literal["POSTED", "PENDING", "FAILED"] | None = None
+    kind: Literal["expense", "refund", "income", "transfer"] | None = None
 
 
 class MandateResult(StrictContract):
