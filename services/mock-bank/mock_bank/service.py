@@ -1,9 +1,17 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
+import json
 from zoneinfo import ZoneInfo
 
-from .contracts import TransactionQuery, TransferQuote, TransferRequest, TransferResult
+from .contracts import (
+    MandateResult,
+    TransactionQuery,
+    TransferQuote,
+    TransferRequest,
+    TransferResult,
+)
 from .domain import BankError, canonical_transfer_hash, validate_idempotency_key
 from .faults import DroppedBankResponse, FaultPoint
 from .models import Mandate, Transfer
@@ -173,4 +181,51 @@ class BankService:
 
     def get_transfer_status(self, subject: str, transfer_id: str) -> TransferResult:
         return self._transfer(self.repository.get_transfer(subject, transfer_id))
+
+    @staticmethod
+    def _mandate_result(mandate: Mandate) -> MandateResult:
+        return MandateResult(
+            mandate_id=mandate.id,
+            account_id=mandate.account_id,
+            merchant_name=mandate.merchant,
+            status=mandate.status,
+            cancellable=mandate.can_cancel,
+            cancelled_at=mandate.cancelled_at,
+            updated_at=mandate.updated_at,
+        )
+
+    def cancel_mandate(
+        self,
+        subject: str,
+        mandate_id: str,
+        idempotency_key: str | None,
+        now: datetime,
+    ) -> MandateResult:
+        try:
+            key = validate_idempotency_key(idempotency_key)  # type: ignore[arg-type]
+        except (TypeError, ValueError) as exc:
+            raise BankError(
+                "INVALID_IDEMPOTENCY_KEY",
+                "a valid Idempotency-Key header is required",
+                http_status=400,
+            ) from exc
+        canonical = json.dumps(
+            {"action": "cancel", "mandate_id": mandate_id, "subject": subject},
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        params_hash = hashlib.sha256(canonical).hexdigest()
+        mandate, result_status, replayed = self.repository.cancel_mandate(
+            subject, mandate_id, key, params_hash, now
+        )
+        if result_status == "UNSUPPORTED":
+            raise BankError(
+                "UNSUPPORTED",
+                "this bank mandate cannot be cancelled",
+                next_action="contact the merchant or bank",
+                http_status=409,
+            )
+        result = self._mandate_result(mandate)
+        object.__setattr__(result, "__replayed__", replayed)
+        return result
 

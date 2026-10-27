@@ -173,6 +173,21 @@ def create_app(
     ) -> dict[str, Any]:
         return envelope(request, service.get_mandate_status(subject, mandate_id))
 
+    @app.post("/bank/v1/mandates/{mandate_id}/cancel")
+    def cancel_mandate(
+        mandate_id: str,
+        request: Request,
+        subject: Subject,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> dict[str, Any]:
+        result = service.cancel_mandate(
+            subject,
+            mandate_id,
+            idempotency_key,
+            datetime.now().astimezone(),
+        )
+        return envelope(request, result.model_dump(mode="json"))
+
     class SubmitTransferBody(BaseModel):
         model_config = ConfigDict(extra="forbid", strict=True)
         quote_id: StrictStr

@@ -18,6 +18,7 @@ from .models import (
     JournalEntry,
     JournalLine,
     Mandate,
+    MandateAction,
     Recipient,
     Transaction,
     Transfer,
@@ -333,6 +334,76 @@ class BankRepository:
                 raise self._resource_error(session, Transfer, transfer_id)
             session.expunge(transfer)
             return transfer
+
+    def cancel_mandate(
+        self,
+        subject: str,
+        mandate_id: str,
+        idempotency_key: str,
+        params_hash: str,
+        now: datetime,
+    ) -> tuple[Mandate, str, bool]:
+        with self.session_factory.begin() as session:
+            session.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:identity, 0))"),
+                {"identity": f"mandate:{subject}:{idempotency_key}"},
+            )
+            existing = session.scalar(
+                select(MandateAction).where(
+                    MandateAction.user_id == subject,
+                    MandateAction.idempotency_key == idempotency_key,
+                )
+            )
+            if existing is not None:
+                if existing.params_hash != params_hash:
+                    raise BankError(
+                        "IDEMPOTENCY_CONFLICT",
+                        "idempotency key was already used for a different mandate",
+                        http_status=409,
+                    )
+                mandate = session.scalar(
+                    select(Mandate).where(
+                        Mandate.id == existing.mandate_id,
+                        Mandate.user_id == subject,
+                    )
+                )
+                if mandate is None:
+                    raise BankError(
+                        "NOT_FOUND", "mandate was not found", http_status=404
+                    )
+                return mandate, existing.result_status, True
+
+            mandate = session.scalar(
+                select(Mandate)
+                .where(Mandate.id == mandate_id, Mandate.user_id == subject)
+                .with_for_update()
+            )
+            if mandate is None:
+                raise self._resource_error(session, Mandate, mandate_id)
+
+            if not mandate.can_cancel and mandate.status == "ACTIVE":
+                result_status = "UNSUPPORTED"
+            else:
+                if mandate.status == "ACTIVE":
+                    mandate.status = "CANCELLED"
+                    mandate.cancelled_at = now
+                    mandate.updated_at = now
+                result_status = mandate.status
+
+            session.add(
+                MandateAction(
+                    id=f"mandate_action_{uuid4().hex}",
+                    user_id=subject,
+                    mandate_id=mandate.id,
+                    idempotency_key=idempotency_key,
+                    params_hash=params_hash,
+                    result_status=result_status,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            session.flush()
+            return mandate, result_status, False
 
     def _encode_cursor(self, subject: str, posted_at: datetime, row_id: str) -> str:
         payload = json.dumps(

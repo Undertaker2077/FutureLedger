@@ -59,7 +59,7 @@ class MandateResult(StrictContract):
     mandate_id: StrictStr
     account_id: StrictStr
     merchant_name: StrictStr
-    status: Literal["ACTIVE", "CANCELLED", "UNSUPPORTED"]
+    status: Literal["ACTIVE", "CANCELLED", "EXPIRED"]
     cancellable: bool
     cancelled_at: datetime | None = None
     updated_at: datetime
