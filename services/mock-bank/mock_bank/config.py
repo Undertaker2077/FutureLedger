@@ -20,6 +20,9 @@ class Settings:
             ),
             service_token=os.environ.get("BANK_SERVICE_TOKEN", "local-bank-service-token"),
             quote_ttl_seconds=int(os.environ.get("BANK_QUOTE_TTL_SECONDS", "300")),
-            environment=os.environ.get("BANK_ENVIRONMENT", "development"),
+            environment=os.environ.get(
+                "FUTURELEDGER_ENV",
+                os.environ.get("BANK_ENVIRONMENT", "development"),
+            ),
         )
 

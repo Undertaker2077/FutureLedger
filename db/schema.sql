@@ -21,15 +21,28 @@ CREATE TABLE bank.recipients (
  UNIQUE(user_id,id)
 );
 CREATE TABLE bank.transfers (
- id text PRIMARY KEY, user_id text NOT NULL, account_id text NOT NULL,
+ id text PRIMARY KEY, user_id text NOT NULL, quote_id text NOT NULL,
+ account_id text NOT NULL,
  recipient_id text NOT NULL, amount_cents bigint NOT NULL CHECK(amount_cents>0),
  fee_cents bigint NOT NULL DEFAULT 0 CHECK(fee_cents>=0),
+ currency char(3) NOT NULL DEFAULT 'CNY' CHECK(currency='CNY'), reference text,
+ params_hash char(64) NOT NULL,
  idempotency_key text NOT NULL, status text NOT NULL CHECK(status IN ('PENDING','SUCCEEDED','FAILED')),
- scheduled_at timestamptz, created_at timestamptz NOT NULL DEFAULT now(),
+ bank_reference text UNIQUE, failure_code text, scheduled_at timestamptz,
+ created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
  UNIQUE(user_id,idempotency_key),
  FOREIGN KEY(user_id,account_id) REFERENCES bank.accounts(user_id,id),
  FOREIGN KEY(user_id,recipient_id) REFERENCES bank.recipients(user_id,id)
 );
+CREATE TABLE bank.transfer_quotes (
+ id text PRIMARY KEY, user_id text NOT NULL, account_id text NOT NULL, recipient_id text NOT NULL,
+ amount_cents bigint NOT NULL CHECK(amount_cents>0), fee_cents bigint NOT NULL CHECK(fee_cents>=0),
+ currency char(3) NOT NULL DEFAULT 'CNY' CHECK(currency='CNY'), reference text,
+ params_hash char(64) NOT NULL, expires_at timestamptz NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
+ FOREIGN KEY(user_id,account_id) REFERENCES bank.accounts(user_id,id),
+ FOREIGN KEY(user_id,recipient_id) REFERENCES bank.recipients(user_id,id)
+);
+ALTER TABLE bank.transfers ADD FOREIGN KEY(quote_id) REFERENCES bank.transfer_quotes(id);
 CREATE TABLE bank.transactions (
  id text PRIMARY KEY, user_id text NOT NULL, account_id text NOT NULL,
  external_id text NOT NULL, amount_cents bigint NOT NULL CHECK(amount_cents>0),
@@ -38,6 +51,7 @@ CREATE TABLE bank.transactions (
  status text NOT NULL CHECK(status IN ('POSTED','PENDING','FAILED')),
  category text NOT NULL, merchant text NOT NULL, memo text NOT NULL DEFAULT '',
  posted_at timestamptz NOT NULL, refund_of text REFERENCES bank.transactions(id),
+ transfer_id text UNIQUE REFERENCES bank.transfers(id),
  UNIQUE(account_id,external_id), FOREIGN KEY(user_id,account_id) REFERENCES bank.accounts(user_id,id)
 );
 CREATE INDEX transaction_scope_date ON bank.transactions(user_id,posted_at);
@@ -58,6 +72,25 @@ CREATE TABLE bank.mandates (
  can_cancel boolean NOT NULL, as_of timestamptz NOT NULL,
  UNIQUE(user_id,id), FOREIGN KEY(user_id,account_id) REFERENCES bank.accounts(user_id,id)
 );
+CREATE TABLE bank.mandate_actions (
+ id text PRIMARY KEY, user_id text NOT NULL, mandate_id text NOT NULL,
+ idempotency_key text NOT NULL, params_hash char(64) NOT NULL, result_status text NOT NULL,
+ created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+ UNIQUE(user_id,idempotency_key),
+ FOREIGN KEY(user_id,mandate_id) REFERENCES bank.mandates(user_id,id)
+);
+CREATE OR REPLACE FUNCTION bank.assert_balanced_journal_entry() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE target_entry text;
+BEGIN
+ target_entry := COALESCE(NEW.entry_id, OLD.entry_id);
+ IF EXISTS (SELECT 1 FROM bank.journal_entries WHERE id=target_entry)
+    AND COALESCE((SELECT SUM(signed_cents) FROM bank.journal_lines WHERE entry_id=target_entry),0) <> 0
+ THEN RAISE EXCEPTION 'journal entry % is not balanced', target_entry;
+ END IF;
+ RETURN NULL;
+END $$;
+CREATE CONSTRAINT TRIGGER journal_lines_balanced AFTER INSERT OR UPDATE OR DELETE ON bank.journal_lines
+DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION bank.assert_balanced_journal_entry();
 CREATE TABLE app.preferences (
  user_id text PRIMARY KEY REFERENCES app.users(id), min_balance_cents bigint NOT NULL CHECK(min_balance_cents>=0),
  updated_at timestamptz NOT NULL DEFAULT now()
@@ -148,3 +181,15 @@ CREATE TABLE app.audit_events (
  event_type text NOT NULL, redacted_payload jsonb NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
 );
 COMMIT;
+
+DO $$ BEGIN
+ IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='futureledger_bank_runtime') THEN
+  CREATE ROLE futureledger_bank_runtime NOLOGIN;
+ END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='futureledger_bank_read') THEN
+  CREATE ROLE futureledger_bank_read NOLOGIN;
+ END IF;
+END $$;
+GRANT USAGE ON SCHEMA app, bank TO futureledger_bank_runtime, futureledger_bank_read;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA bank TO futureledger_bank_runtime;
+GRANT SELECT ON ALL TABLES IN SCHEMA app, bank TO futureledger_bank_read;
