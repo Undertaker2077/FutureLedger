@@ -7,11 +7,12 @@ import json
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
-from sqlalchemy import Select, and_, or_, select
+from sqlalchemy import Select, and_, or_, select, text
 from sqlalchemy.orm import Session, sessionmaker
 
 from .contracts import TransactionQuery, TransferRequest
 from .domain import BankError
+from .faults import FaultPoint, InjectedBankFault
 from .models import (
     Account,
     JournalEntry,
@@ -182,6 +183,7 @@ class BankRepository:
         params_hash: str,
         idempotency_key: str,
         now: datetime,
+        fault: FaultPoint | None = None,
     ) -> tuple[Transfer, bool]:
         with self.session_factory.begin() as session:
             quote = session.scalar(
@@ -207,6 +209,10 @@ class BankRepository:
                     http_status=409,
                 )
 
+            session.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:identity, 0))"),
+                {"identity": f"transfer:{subject}:{idempotency_key}"},
+            )
             existing = session.scalar(
                 select(Transfer)
                 .where(
@@ -246,15 +252,8 @@ class BankRepository:
                     http_status=409,
                 )
             total = quote.amount_cents + quote.fee_cents
-            if account.balance_cents < total:
-                raise BankError(
-                    "INSUFFICIENT_FUNDS",
-                    "account has insufficient available funds",
-                    next_action="use a different account or reduce the amount",
-                    http_status=409,
-                )
-
             transfer_id = f"transfer_{uuid4().hex}"
+            insufficient = account.balance_cents < total
             transfer = Transfer(
                 id=transfer_id,
                 user_id=subject,
@@ -267,13 +266,19 @@ class BankRepository:
                 reference=quote.reference,
                 params_hash=quote.params_hash,
                 idempotency_key=idempotency_key,
-                status="SUCCEEDED",
-                bank_reference=f"MOCK-{uuid4().hex.upper()}",
+                status="FAILED" if insufficient else "SUCCEEDED",
+                bank_reference=None if insufficient else f"MOCK-{uuid4().hex.upper()}",
+                failure_code="INSUFFICIENT_FUNDS" if insufficient else None,
                 created_at=now,
                 updated_at=now,
             )
             session.add(transfer)
             session.flush()
+
+            if insufficient:
+                if fault == FaultPoint.BEFORE_COMMIT:
+                    raise InjectedBankFault("injected fault at before_commit")
+                return transfer, False
 
             transaction = Transaction(
                 id=f"tx_transfer_{uuid4().hex}",
@@ -313,6 +318,8 @@ class BankRepository:
             )
             account.balance_cents -= total
             account.as_of = now
+            if fault == FaultPoint.BEFORE_COMMIT:
+                raise InjectedBankFault("injected fault at before_commit")
             return transfer, False
 
     def get_transfer(self, subject: str, transfer_id: str) -> Transfer:

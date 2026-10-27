@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, StrictStr
 from .contracts import TransactionQuery, TransferRequest
 from .db import create_session_factory
 from .domain import BankError
+from .faults import FaultPoint
 from .repository import BankRepository
 from .service import BankService
 
@@ -190,9 +191,24 @@ def create_app(
         request: Request,
         subject: Subject,
         idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+        x_mock_fault: Annotated[str | None, Header(alias="X-Mock-Fault")] = None,
     ) -> JSONResponse:
+        fault = None
+        if x_mock_fault is not None:
+            if resolved_settings.environment != "test":
+                raise BankError(
+                    "UNSUPPORTED",
+                    "mock fault injection is available only in test mode",
+                    http_status=400,
+                )
+            try:
+                fault = FaultPoint(x_mock_fault)
+            except ValueError as exc:
+                raise BankError(
+                    "UNSUPPORTED", "unknown mock fault point", http_status=400
+                ) from exc
         result = service.submit_transfer(
-            subject, body.quote_id, body.params_hash, idempotency_key
+            subject, body.quote_id, body.params_hash, idempotency_key, fault
         )
         replayed = bool(getattr(result, "__replayed__", False))
         return JSONResponse(

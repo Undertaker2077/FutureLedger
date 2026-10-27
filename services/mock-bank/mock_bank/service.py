@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 from .contracts import TransactionQuery, TransferQuote, TransferRequest, TransferResult
 from .domain import BankError, canonical_transfer_hash, validate_idempotency_key
+from .faults import DroppedBankResponse, FaultPoint
 from .models import Mandate, Transfer
 from .repository import BankRepository
 
@@ -151,9 +152,8 @@ class BankService:
         quote_id: str,
         params_hash: str,
         idempotency_key: str | None,
-        fault: str | None = None,
+        fault: FaultPoint | None = None,
     ) -> TransferResult:
-        del fault
         try:
             key = validate_idempotency_key(idempotency_key)  # type: ignore[arg-type]
         except (TypeError, ValueError) as exc:
@@ -163,10 +163,12 @@ class BankService:
                 http_status=400,
             ) from exc
         transfer, replayed = self.repository.submit_transfer(
-            subject, quote_id, params_hash, key, datetime.now(timezone.utc)
+            subject, quote_id, params_hash, key, datetime.now(timezone.utc), fault
         )
         result = self._transfer(transfer)
         object.__setattr__(result, "__replayed__", replayed)
+        if fault == FaultPoint.DROP_RESPONSE_AFTER_COMMIT and not replayed:
+            raise DroppedBankResponse("injected dropped response after commit")
         return result
 
     def get_transfer_status(self, subject: str, transfer_id: str) -> TransferResult:
