@@ -31,6 +31,22 @@ python3 -m uvicorn demo.api:app --host 127.0.0.1 --port 8000
 
 如需结束服务，在运行 Uvicorn 的终端按 `Ctrl+C`。再次启动时执行最后一条 Uvicorn 命令即可。第一次生成数据之后，无需每次重新运行 `generate_data.py`；重新生成会覆盖合成基准数据。
 
+## Role A 模拟银行
+
+`services/mock-bank/` 提供独立的 FastAPI/PostgreSQL 模拟银行，覆盖账户、收款人、流水、报价、幂等转账、查证、平衡分录、代扣取消、复位和对账。它只使用合成数据；PostgreSQL 通过 Docker 运行，不需要安装到 `/Library/PostgreSQL/18`。本模块使用 Conda，完整命令、端口、环境变量及 B/C/F 交接见 [`services/mock-bank/README.md`](services/mock-bank/README.md)。
+
+```bash
+conda env create -f services/mock-bank/environment.yml
+conda activate futureledger-bank
+docker compose -f services/mock-bank/compose.bank.yml up -d postgres
+export PYTHONPATH=services/mock-bank
+export BANK_DATABASE_URL='postgresql+psycopg://futureledger:futureledger@localhost:55432/futureledger_bank'
+export FUTURELEDGER_INTERNAL_TOKEN='replace-with-a-local-secret'
+export FUTURELEDGER_ENV=development FUTURELEDGER_ALLOW_RESET=1
+python -m mock_bank.seed reset
+python -m uvicorn mock_bank.api:app --host 127.0.0.1 --port 8001
+```
+
 ## 配置模型 API
 
 API key 和模型名称都通过环境变量提供。请在启动 Uvicorn 的同一个终端设置它们；不要把真实 key 写进 Python 文件、README、截图或 Git。`.env.example` 仅供参考，应用不会自动读取该文件。实际 `.env` 已列入 `.gitignore`。
@@ -121,3 +137,5 @@ python3 scripts/run_benchmark.py
 ```
 
 这些检查不需要模型 API key。生产身份认证、真实银行服务、现金流规划引擎和部署沙箱尚未实现。
+
+模拟银行的 pytest、PostgreSQL 对账和 A-owned 验收报告使用单独命令，见模块 README。共享 transfer/mandate 用例的 A 侧证据标记为 `A_SIDE_PASS`，仍需 B/C 的执行、追问或同意边界证据才能形成全链路通过。
