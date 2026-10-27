@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from .contracts import TransactionQuery
-from .domain import BankError
-from .models import Mandate
+from .contracts import TransactionQuery, TransferQuote, TransferRequest, TransferResult
+from .domain import BankError, canonical_transfer_hash, validate_idempotency_key
+from .models import Mandate, Transfer
 from .repository import BankRepository
 
 
@@ -101,4 +101,74 @@ class BankService:
 
     def get_mandate_status(self, subject: str, mandate_id: str) -> dict[str, object]:
         return self._mandate(self.repository.get_mandate(subject, mandate_id))
+
+    def quote_transfer(
+        self, subject: str, request: TransferRequest, now: datetime
+    ) -> TransferQuote:
+        self.repository.get_account(subject, request.account_id)
+        recipient = self.repository.get_recipient(subject, request.recipient_id)
+        if not recipient.verified:
+            raise BankError(
+                "RECIPIENT_UNVERIFIED",
+                "recipient is not verified by the bank",
+                next_action="verify the recipient before retrying",
+                http_status=409,
+            )
+        params_hash = canonical_transfer_hash(subject, request, 0)
+        quote = self.repository.create_transfer_quote(subject, request, params_hash, now, 300)
+        return TransferQuote(
+            quote_id=quote.id,
+            account_id=quote.account_id,
+            recipient_id=quote.recipient_id,
+            amount_cents=quote.amount_cents,
+            fee_cents=quote.fee_cents,
+            currency=quote.currency,
+            reference=quote.reference,
+            params_hash=quote.params_hash,
+            expires_at=quote.expires_at,
+        )
+
+    @staticmethod
+    def _transfer(transfer: Transfer) -> TransferResult:
+        return TransferResult(
+            transfer_id=transfer.id,
+            status=transfer.status,
+            account_id=transfer.account_id,
+            recipient_id=transfer.recipient_id,
+            amount_cents=transfer.amount_cents,
+            fee_cents=transfer.fee_cents,
+            currency=transfer.currency,
+            params_hash=transfer.params_hash,
+            bank_reference=transfer.bank_reference,
+            failure_code=transfer.failure_code,
+            created_at=transfer.created_at,
+            updated_at=transfer.updated_at,
+        )
+
+    def submit_transfer(
+        self,
+        subject: str,
+        quote_id: str,
+        params_hash: str,
+        idempotency_key: str | None,
+        fault: str | None = None,
+    ) -> TransferResult:
+        del fault
+        try:
+            key = validate_idempotency_key(idempotency_key)  # type: ignore[arg-type]
+        except (TypeError, ValueError) as exc:
+            raise BankError(
+                "INVALID_IDEMPOTENCY_KEY",
+                "a valid Idempotency-Key header is required",
+                http_status=400,
+            ) from exc
+        transfer, replayed = self.repository.submit_transfer(
+            subject, quote_id, params_hash, key, datetime.now(timezone.utc)
+        )
+        result = self._transfer(transfer)
+        object.__setattr__(result, "__replayed__", replayed)
+        return result
+
+    def get_transfer_status(self, subject: str, transfer_id: str) -> TransferResult:
+        return self._transfer(self.repository.get_transfer(subject, transfer_id))
 

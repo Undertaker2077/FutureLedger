@@ -4,12 +4,16 @@ from typing import Annotated, Any
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, Query, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session, sessionmaker
 
 from .auth import authenticate
 from .config import Settings
-from .contracts import TransactionQuery
+from pydantic import BaseModel, ConfigDict, StrictStr
+
+from .contracts import TransactionQuery, TransferRequest
 from .db import create_session_factory
 from .domain import BankError
 from .repository import BankRepository
@@ -58,6 +62,34 @@ def create_app(
             content={
                 "data": None,
                 "error": error,
+                "request_id": request.state.request_id,
+            },
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(
+        request: Request, exc: RequestValidationError
+    ) -> JSONResponse:
+        locations = {str(part) for error in exc.errors() for part in error["loc"]}
+        if "amount_cents" in locations:
+            code = "INVALID_AMOUNT"
+            message = "amount_cents must be a positive integer"
+        elif "currency" in locations:
+            code = "INVALID_CURRENCY"
+            message = "only CNY is supported"
+        else:
+            code = "INVALID_REQUEST"
+            message = "request does not match the bank contract"
+        return JSONResponse(
+            status_code=400,
+            content={
+                "data": None,
+                "error": {
+                    "code": code,
+                    "message": message,
+                    "recoverable": False,
+                    "next_action": None,
+                },
                 "request_id": request.state.request_id,
             },
         )
@@ -139,6 +171,45 @@ def create_app(
         mandate_id: str, request: Request, subject: Subject
     ) -> dict[str, Any]:
         return envelope(request, service.get_mandate_status(subject, mandate_id))
+
+    class SubmitTransferBody(BaseModel):
+        model_config = ConfigDict(extra="forbid", strict=True)
+        quote_id: StrictStr
+        params_hash: StrictStr
+
+    @app.post("/bank/v1/transfers/quotes", status_code=201)
+    def quote_transfer(
+        body: TransferRequest, request: Request, subject: Subject
+    ) -> dict[str, Any]:
+        quote = service.quote_transfer(subject, body, datetime.now().astimezone())
+        return envelope(request, quote.model_dump(mode="json"))
+
+    @app.post("/bank/v1/transfers")
+    def submit_transfer(
+        body: SubmitTransferBody,
+        request: Request,
+        subject: Subject,
+        idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+    ) -> JSONResponse:
+        result = service.submit_transfer(
+            subject, body.quote_id, body.params_hash, idempotency_key
+        )
+        replayed = bool(getattr(result, "__replayed__", False))
+        return JSONResponse(
+            status_code=200 if replayed else 201,
+            content=jsonable_encoder(
+                envelope(request, result.model_dump(mode="json"))
+            ),
+        )
+
+    @app.get("/bank/v1/transfers/{transfer_id}")
+    def get_transfer(
+        transfer_id: str, request: Request, subject: Subject
+    ) -> dict[str, Any]:
+        return envelope(
+            request,
+            service.get_transfer_status(subject, transfer_id).model_dump(mode="json"),
+        )
 
     return app
 

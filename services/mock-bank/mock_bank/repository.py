@@ -4,14 +4,24 @@ import base64
 import hashlib
 import hmac
 import json
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 from sqlalchemy import Select, and_, or_, select
 from sqlalchemy.orm import Session, sessionmaker
 
-from .contracts import TransactionQuery
+from .contracts import TransactionQuery, TransferRequest
 from .domain import BankError
-from .models import Account, Mandate, Recipient, Transaction
+from .models import (
+    Account,
+    JournalEntry,
+    JournalLine,
+    Mandate,
+    Recipient,
+    Transaction,
+    Transfer,
+    TransferQuote,
+)
 
 
 class BankRepository:
@@ -139,6 +149,183 @@ class BankRepository:
     def ping(self) -> None:
         with self.session_factory() as session:
             session.execute(select(1)).scalar_one()
+
+    def create_transfer_quote(
+        self,
+        subject: str,
+        request: TransferRequest,
+        params_hash: str,
+        now: datetime,
+        ttl_seconds: int,
+    ) -> TransferQuote:
+        quote = TransferQuote(
+            id=f"quote_{uuid4().hex}",
+            user_id=subject,
+            account_id=request.account_id,
+            recipient_id=request.recipient_id,
+            amount_cents=request.amount_cents,
+            fee_cents=0,
+            currency=request.currency,
+            reference=request.reference,
+            params_hash=params_hash,
+            expires_at=now + timedelta(seconds=ttl_seconds),
+            created_at=now,
+        )
+        with self.session_factory.begin() as session:
+            session.add(quote)
+        return quote
+
+    def submit_transfer(
+        self,
+        subject: str,
+        quote_id: str,
+        params_hash: str,
+        idempotency_key: str,
+        now: datetime,
+    ) -> tuple[Transfer, bool]:
+        with self.session_factory.begin() as session:
+            quote = session.scalar(
+                select(TransferQuote).where(
+                    TransferQuote.id == quote_id, TransferQuote.user_id == subject
+                )
+            )
+            if quote is None:
+                raise self._resource_error(session, TransferQuote, quote_id)
+            if quote.params_hash != params_hash:
+                raise BankError(
+                    "QUOTE_MISMATCH",
+                    "confirmed parameters do not match the bank quote",
+                    next_action="request a new quote and confirm it",
+                    http_status=409,
+                )
+            if quote.expires_at <= now:
+                raise BankError(
+                    "QUOTE_EXPIRED",
+                    "bank quote has expired",
+                    recoverable=True,
+                    next_action="request a replacement quote",
+                    http_status=409,
+                )
+
+            existing = session.scalar(
+                select(Transfer)
+                .where(
+                    Transfer.user_id == subject,
+                    Transfer.idempotency_key == idempotency_key,
+                )
+                .with_for_update()
+            )
+            if existing is not None:
+                if existing.params_hash != params_hash:
+                    raise BankError(
+                        "IDEMPOTENCY_CONFLICT",
+                        "idempotency key was already used for different parameters",
+                        http_status=409,
+                    )
+                return existing, True
+
+            account = session.scalar(
+                select(Account)
+                .where(Account.id == quote.account_id, Account.user_id == subject)
+                .with_for_update()
+            )
+            recipient = session.scalar(
+                select(Recipient)
+                .where(Recipient.id == quote.recipient_id, Recipient.user_id == subject)
+                .with_for_update()
+            )
+            if account is None:
+                raise self._resource_error(session, Account, quote.account_id)
+            if recipient is None:
+                raise self._resource_error(session, Recipient, quote.recipient_id)
+            if not recipient.verified:
+                raise BankError(
+                    "RECIPIENT_UNVERIFIED",
+                    "recipient is not verified by the bank",
+                    next_action="verify the recipient before retrying",
+                    http_status=409,
+                )
+            total = quote.amount_cents + quote.fee_cents
+            if account.balance_cents < total:
+                raise BankError(
+                    "INSUFFICIENT_FUNDS",
+                    "account has insufficient available funds",
+                    next_action="use a different account or reduce the amount",
+                    http_status=409,
+                )
+
+            transfer_id = f"transfer_{uuid4().hex}"
+            transfer = Transfer(
+                id=transfer_id,
+                user_id=subject,
+                quote_id=quote.id,
+                account_id=quote.account_id,
+                recipient_id=quote.recipient_id,
+                amount_cents=quote.amount_cents,
+                fee_cents=quote.fee_cents,
+                currency=quote.currency,
+                reference=quote.reference,
+                params_hash=quote.params_hash,
+                idempotency_key=idempotency_key,
+                status="SUCCEEDED",
+                bank_reference=f"MOCK-{uuid4().hex.upper()}",
+                created_at=now,
+                updated_at=now,
+            )
+            session.add(transfer)
+            session.flush()
+
+            transaction = Transaction(
+                id=f"tx_transfer_{uuid4().hex}",
+                external_id=transfer.bank_reference,
+                user_id=subject,
+                account_id=account.id,
+                amount_cents=total,
+                direction="OUT",
+                kind="transfer",
+                status="POSTED",
+                category="转账",
+                merchant=recipient.name,
+                memo=quote.reference or "",
+                posted_at=now,
+                transfer_id=transfer.id,
+            )
+            entry = JournalEntry(
+                id=f"journal_{uuid4().hex}", business_ref=transfer.id, created_at=now
+            )
+            session.add_all([transaction, entry])
+            session.flush()
+            session.add_all(
+                [
+                    JournalLine(
+                        id=f"line_{uuid4().hex}",
+                        entry_id=entry.id,
+                        ledger_account_ref=f"account:{account.id}",
+                        signed_cents=-total,
+                    ),
+                    JournalLine(
+                        id=f"line_{uuid4().hex}",
+                        entry_id=entry.id,
+                        ledger_account_ref="clearing:external",
+                        signed_cents=total,
+                    ),
+                ]
+            )
+            account.balance_cents -= total
+            account.as_of = now
+            return transfer, False
+
+    def get_transfer(self, subject: str, transfer_id: str) -> Transfer:
+        with self.session_factory() as session:
+            transfer = session.scalar(
+                select(Transfer).where(
+                    Transfer.id == transfer_id, Transfer.user_id == subject
+                )
+            )
+            if transfer is None:
+                raise self._resource_error(session, Transfer, transfer_id)
+            session.expunge(transfer)
+            return transfer
 
     def _encode_cursor(self, subject: str, posted_at: datetime, row_id: str) -> str:
         payload = json.dumps(
