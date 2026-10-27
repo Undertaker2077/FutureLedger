@@ -40,12 +40,15 @@ conda env create -f services/mock-bank/environment.yml
 conda activate futureledger-bank
 docker compose -f services/mock-bank/compose.bank.yml up -d postgres
 export PYTHONPATH=services/mock-bank
-export BANK_DATABASE_URL='postgresql+psycopg://futureledger:futureledger@localhost:55432/futureledger_bank'
 export FUTURELEDGER_INTERNAL_TOKEN='replace-with-a-local-secret'
 export FUTURELEDGER_ENV=development FUTURELEDGER_ALLOW_RESET=1
+export BANK_DATABASE_URL='postgresql+psycopg://futureledger:futureledger@localhost:55432/futureledger_bank'
 python -m mock_bank.seed reset
+export BANK_DATABASE_URL='postgresql+psycopg://futureledger_runtime:futureledger-runtime@localhost:55432/futureledger_bank'
 python -m uvicorn mock_bank.api:app --host 127.0.0.1 --port 8001
 ```
+
+首个连接仅供迁移和复位；服务启动前切换到只能操作 `bank` schema 的本地 runtime 账号。以上密码仅属于可丢弃的合成 Compose 环境。
 
 ## 配置模型 API
 

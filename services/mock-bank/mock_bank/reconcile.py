@@ -25,17 +25,50 @@ def reconcile(session: Session) -> ReconciliationReport:
     check_queries = {
         "journal_balance": """
             SELECT NOT EXISTS (
-              SELECT entry_id FROM bank.journal_lines
-              GROUP BY entry_id HAVING SUM(signed_cents) <> 0
+              SELECT je.id
+              FROM bank.journal_entries je
+              LEFT JOIN bank.journal_lines jl ON jl.entry_id = je.id
+              GROUP BY je.id
+              HAVING COUNT(jl.id) <> 2 OR COALESCE(SUM(jl.signed_cents), 0) <> 0
             )
         """,
         "transfer_evidence": """
             SELECT NOT EXISTS (
               SELECT 1 FROM bank.transfers tr
-              WHERE tr.status = 'SUCCEEDED' AND (
-                NOT EXISTS (SELECT 1 FROM bank.transactions tx WHERE tx.transfer_id = tr.id)
-                OR NOT EXISTS (SELECT 1 FROM bank.journal_entries je WHERE je.business_ref = tr.id)
-              )
+              WHERE
+                (tr.status = 'SUCCEEDED' AND (
+                  (SELECT COUNT(*) FROM bank.transactions tx
+                   WHERE tx.transfer_id = tr.id
+                     AND tx.user_id = tr.user_id
+                     AND tx.account_id = tr.account_id
+                     AND tx.amount_cents = tr.amount_cents + tr.fee_cents
+                     AND tx.direction = 'OUT'
+                     AND tx.kind = 'transfer'
+                     AND tx.status = 'POSTED') <> 1
+                  OR (SELECT COUNT(*) FROM bank.journal_entries je
+                      WHERE je.business_ref = tr.id) <> 1
+                  OR (SELECT COUNT(*) FROM bank.journal_entries je
+                      JOIN bank.journal_lines jl ON jl.entry_id = je.id
+                      WHERE je.business_ref = tr.id) <> 2
+                  OR NOT EXISTS (
+                      SELECT 1 FROM bank.journal_entries je
+                      JOIN bank.journal_lines jl ON jl.entry_id = je.id
+                      WHERE je.business_ref = tr.id
+                        AND jl.ledger_account_ref = 'account:' || tr.account_id
+                        AND jl.signed_cents = -(tr.amount_cents + tr.fee_cents)
+                  )
+                  OR NOT EXISTS (
+                      SELECT 1 FROM bank.journal_entries je
+                      JOIN bank.journal_lines jl ON jl.entry_id = je.id
+                      WHERE je.business_ref = tr.id
+                        AND jl.ledger_account_ref = 'clearing:external'
+                        AND jl.signed_cents = tr.amount_cents + tr.fee_cents
+                  )
+                ))
+                OR (tr.status <> 'SUCCEEDED' AND (
+                  EXISTS (SELECT 1 FROM bank.transactions tx WHERE tx.transfer_id = tr.id)
+                  OR EXISTS (SELECT 1 FROM bank.journal_entries je WHERE je.business_ref = tr.id)
+                ))
             )
         """,
         "account_derived_balance": """
@@ -83,6 +116,8 @@ def main() -> None:
         print(json.dumps(asdict(report), ensure_ascii=False, sort_keys=True))
     else:
         print(report)
+    if not report.valid:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

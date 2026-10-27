@@ -19,12 +19,13 @@ from .repository import BankRepository
 
 
 class BankService:
-    def __init__(self, repository: BankRepository) -> None:
+    def __init__(self, repository: BankRepository, quote_ttl_seconds: int = 300) -> None:
         self.repository = repository
+        self.quote_ttl_seconds = quote_ttl_seconds
 
     @staticmethod
     def _iso_hong_kong(value: datetime) -> str:
-        return value.astimezone(ZoneInfo("Asia/Hong_Kong")).isoformat()
+        return value.astimezone(ZoneInfo("Asia/Shanghai")).isoformat()
 
     def get_balance(self, subject: str, account_id: str) -> dict[str, object]:
         account = self.repository.get_account(subject, account_id)
@@ -124,7 +125,9 @@ class BankService:
                 http_status=409,
             )
         params_hash = canonical_transfer_hash(subject, request, 0)
-        quote = self.repository.create_transfer_quote(subject, request, params_hash, now, 300)
+        quote = self.repository.create_transfer_quote(
+            subject, request, params_hash, now, self.quote_ttl_seconds
+        )
         return TransferQuote(
             quote_id=quote.id,
             account_id=quote.account_id,

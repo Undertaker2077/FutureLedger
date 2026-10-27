@@ -187,6 +187,25 @@ class BankRepository:
         fault: FaultPoint | None = None,
     ) -> tuple[Transfer, bool]:
         with self.session_factory.begin() as session:
+            session.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:identity, 0))"),
+                {"identity": f"transfer:{subject}:{idempotency_key}"},
+            )
+            existing = session.scalar(
+                select(Transfer).where(
+                    Transfer.user_id == subject,
+                    Transfer.idempotency_key == idempotency_key,
+                )
+            )
+            if existing is not None:
+                if existing.params_hash != params_hash:
+                    raise BankError(
+                        "IDEMPOTENCY_CONFLICT",
+                        "idempotency key was already used for different parameters",
+                        http_status=409,
+                    )
+                return existing, True
+
             quote = session.scalar(
                 select(TransferQuote).where(
                     TransferQuote.id == quote_id, TransferQuote.user_id == subject
@@ -209,27 +228,6 @@ class BankRepository:
                     next_action="request a replacement quote",
                     http_status=409,
                 )
-
-            session.execute(
-                text("SELECT pg_advisory_xact_lock(hashtextextended(:identity, 0))"),
-                {"identity": f"transfer:{subject}:{idempotency_key}"},
-            )
-            existing = session.scalar(
-                select(Transfer)
-                .where(
-                    Transfer.user_id == subject,
-                    Transfer.idempotency_key == idempotency_key,
-                )
-                .with_for_update()
-            )
-            if existing is not None:
-                if existing.params_hash != params_hash:
-                    raise BankError(
-                        "IDEMPOTENCY_CONFLICT",
-                        "idempotency key was already used for different parameters",
-                        http_status=409,
-                    )
-                return existing, True
 
             account = session.scalar(
                 select(Account)

@@ -100,3 +100,19 @@ def test_fault_header_is_rejected_outside_test_mode(
         )
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "UNSUPPORTED"
+
+
+def test_temporary_unavailable_is_test_only_structured_error(
+    bank_settings: Settings, seeded_session_factory: sessionmaker[Session]
+) -> None:
+    with TestClient(create_app(bank_settings, seeded_session_factory)) as client:
+        transfer_quote = request_quote(client)
+        response = client.post(
+            "/bank/v1/transfers",
+            headers=headers("temporary_unavailable"),
+            json=body(transfer_quote),
+        )
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "UPSTREAM_UNAVAILABLE"
+    with seeded_session_factory() as session:
+        assert session.scalar(select(func.count()).select_from(Transfer)) == 0

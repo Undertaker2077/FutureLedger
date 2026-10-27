@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from mock_bank.acceptance import run_role_a_acceptance
+from mock_bank.acceptance import direct_case_passes, run_role_a_acceptance
 from mock_bank.config import Settings
 
 
@@ -31,4 +31,15 @@ def test_direct_role_a_cases_pass_with_machine_evidence(
         assert results[case_id].evidence
         assert results[case_id].owner.startswith("A+")
     assert report.fail_count == 0
+
+
+def test_direct_case_predicates_fail_closed_on_wrong_evidence() -> None:
+    assert direct_case_passes(
+        "transfer_05",
+        {"status": "SUCCEEDED", "failure_code": None, "balance_cents": 0},
+    ) is False
+    assert direct_case_passes(
+        "transfer_04",
+        {"error_code": "OTHER", "transfer_count": 0, "balance_cents": 900_000},
+    ) is False
 

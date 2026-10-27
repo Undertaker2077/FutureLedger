@@ -13,15 +13,17 @@ class Settings:
 
     @classmethod
     def from_env(cls) -> "Settings":
+        service_token = os.environ.get("FUTURELEDGER_INTERNAL_TOKEN") or os.environ.get(
+            "BANK_SERVICE_TOKEN"
+        )
+        if not service_token:
+            raise RuntimeError("FUTURELEDGER_INTERNAL_TOKEN must be set explicitly")
         return cls(
             database_url=os.environ.get(
                 "BANK_DATABASE_URL",
                 "postgresql+psycopg://futureledger:futureledger@localhost:5432/futureledger_bank",
             ),
-            service_token=os.environ.get(
-                "FUTURELEDGER_INTERNAL_TOKEN",
-                os.environ.get("BANK_SERVICE_TOKEN", "local-bank-service-token"),
-            ),
+            service_token=service_token,
             quote_ttl_seconds=int(os.environ.get("BANK_QUOTE_TTL_SECONDS", "300")),
             environment=os.environ.get(
                 "FUTURELEDGER_ENV",

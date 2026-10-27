@@ -14,13 +14,13 @@ cd ../..
 docker compose -f services/mock-bank/compose.bank.yml up -d postgres
 ```
 
-The compose service exposes its isolated PostgreSQL 18 database on `localhost:55432`; no installation under `/Library/PostgreSQL` is required. Wait until it is healthy with `docker compose -f services/mock-bank/compose.bank.yml ps`.
+The compose service exposes its isolated PostgreSQL 18.6 database on `localhost:55432`; no installation under `/Library/PostgreSQL` is required. Wait until it is healthy with `docker compose -f services/mock-bank/compose.bank.yml ps`.
 
 Set local-only configuration in the same shell. Never commit the token:
 
 ```bash
 export PYTHONPATH=services/mock-bank
-export BANK_DATABASE_URL='postgresql+psycopg://futureledger:futureledger@localhost:55432/futureledger_bank'
+export BANK_DATABASE_URL='postgresql+psycopg://futureledger:futureledger@localhost:55432/futureledger_bank' # migration/reset owner only
 export FUTURELEDGER_INTERNAL_TOKEN='replace-with-a-local-secret'
 export FUTURELEDGER_ENV=development
 export FUTURELEDGER_ALLOW_RESET=1
@@ -30,9 +30,12 @@ export FUTURELEDGER_ALLOW_RESET=1
 
 ```bash
 python -m mock_bank.seed reset
+export BANK_DATABASE_URL='postgresql+psycopg://futureledger_runtime:futureledger-runtime@localhost:55432/futureledger_bank'
 python -m mock_bank.reconcile --json
 python -m uvicorn mock_bank.api:app --host 127.0.0.1 --port 8001
 ```
+
+The owner connection is used only for migrations and destructive fixture reset. The API and normal reconciliation run as `futureledger_runtime`, which can read and write the `bank` schema but cannot modify `app` data. The shown credentials are synthetic local defaults; do not reuse them outside this disposable Compose stack. `FUTURELEDGER_INTERNAL_TOKEN` has no built-in default and startup fails when it is absent.
 
 Health endpoints are public; bank endpoints require both internal service and subject headers:
 
@@ -92,4 +95,4 @@ The report executes all 20 A-owned transfer/mandate cases from the immutable cat
 - Reset only disposable test/development databases with both guards enabled.
 - Run reconciliation after transfer, fault, concurrency, and mandate scenarios.
 - Consume `outputs/role-a-acceptance.json`; expected A statuses are `PASS` or `A_SIDE_PASS`, never `FAIL`.
-- Test-only `X-Mock-Fault` values are `before_commit` and `drop_response_after_commit`; production mode rejects the header.
+- Test-only `X-Mock-Fault` values are `before_commit`, `drop_response_after_commit`, and `temporary_unavailable`; production mode rejects the header.

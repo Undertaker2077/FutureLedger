@@ -1,5 +1,5 @@
--- PostgreSQL design baseline, not a deployed migration.
--- Runtime roles, RLS policies, grants, balance/deferred ledger triggers are follow-up work.
+-- PostgreSQL schema snapshot. Executable migrations live under services/mock-bank/alembic/.
+-- This local synthetic-bank schema includes roles and a deferred ledger trigger; production RLS is out of scope.
 BEGIN;
 CREATE SCHEMA IF NOT EXISTS bank;
 CREATE SCHEMA IF NOT EXISTS app;
@@ -189,7 +189,15 @@ DO $$ BEGIN
  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='futureledger_bank_read') THEN
   CREATE ROLE futureledger_bank_read NOLOGIN;
  END IF;
+ IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='futureledger_runtime') THEN
+  CREATE ROLE futureledger_runtime LOGIN PASSWORD 'futureledger-runtime'
+   NOSUPERUSER NOCREATEDB NOCREATEROLE;
+ ELSE
+  ALTER ROLE futureledger_runtime PASSWORD 'futureledger-runtime';
+ END IF;
 END $$;
-GRANT USAGE ON SCHEMA app, bank TO futureledger_bank_runtime, futureledger_bank_read;
+GRANT USAGE ON SCHEMA bank TO futureledger_bank_runtime;
+GRANT USAGE ON SCHEMA app, bank TO futureledger_bank_read;
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA bank TO futureledger_bank_runtime;
 GRANT SELECT ON ALL TABLES IN SCHEMA app, bank TO futureledger_bank_read;
+GRANT futureledger_bank_runtime TO futureledger_runtime;

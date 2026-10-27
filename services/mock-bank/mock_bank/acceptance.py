@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, ValidationError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -15,7 +15,8 @@ from .config import Settings
 from .contracts import TransferRequest
 from .db import create_session_factory
 from .domain import BankError
-from .models import Account, JournalLine, Mandate, MandateAction, Transaction, Transfer
+from .models import JournalEntry, JournalLine, Mandate, MandateAction, Transaction, Transfer
+from .reconcile import reconcile
 from .repository import BankRepository
 from .seed import reset_database
 from .service import BankService
@@ -65,7 +66,88 @@ ZERO_CALL_CASES = {
 
 def _service(settings: Settings) -> BankService:
     factory = create_session_factory(settings)
-    return BankService(BankRepository(factory, settings.service_token))
+    return BankService(
+        BankRepository(factory, settings.service_token), settings.quote_ttl_seconds
+    )
+
+
+def _bank_snapshot(service: BankService) -> dict[str, Any]:
+    factory = service.repository.session_factory
+    with factory() as session:
+        return {
+            "transfer_count": session.scalar(select(func.count()).select_from(Transfer)),
+            "journal_count": session.scalar(select(func.count()).select_from(JournalEntry)),
+            "posted_transfer_count": session.scalar(
+                select(func.count()).select_from(Transaction).where(
+                    Transaction.transfer_id.is_not(None)
+                )
+            ),
+            "mandate_action_count": session.scalar(
+                select(func.count()).select_from(MandateAction)
+            ),
+            "balance_cents": service.get_balance("test_user", "acc_daily")[
+                "balance_cents"
+            ],
+        }
+
+
+def direct_case_passes(case_id: str, evidence: dict[str, Any]) -> bool:
+    if evidence.get("reconciliation_valid") is not True:
+        return False
+    predicates = {
+        "transfer_01": evidence.get("status") == "SUCCEEDED"
+        and evidence.get("balance_cents") == 850_000
+        and evidence.get("journal_line_count") == 2
+        and int(evidence.get("journal_sum", 1)) == 0
+        and bool(evidence.get("bank_reference")),
+        "transfer_04": evidence.get("error_code") == "INVALID_AMOUNT"
+        and evidence.get("transfer_count") == 0
+        and evidence.get("balance_cents") == 900_000,
+        "transfer_05": evidence.get("status") == "FAILED"
+        and evidence.get("failure_code") == "INSUFFICIENT_FUNDS"
+        and evidence.get("balance_cents") == 900_000,
+        "transfer_06": evidence.get("error_code") == "RECIPIENT_UNVERIFIED"
+        and evidence.get("verified") is False
+        and evidence.get("bank_ref_invented") is False,
+        "mandate_02": evidence.get("mandate_count") == 4
+        and evidence.get("mandate_ids")
+        == ["mandate_1", "mandate_2", "mandate_3", "mandate_4"]
+        and evidence.get("other_user_count") == 0,
+        "mandate_03": evidence.get("mandate_id") == "mandate_2"
+        and evidence.get("status") == "CANCELLED"
+        and evidence.get("cancelled_at") is not None,
+        "mandate_06": evidence.get("error_code") == "UNSUPPORTED"
+        and evidence.get("status") == "ACTIVE",
+        "mandate_08": evidence.get("first_status") == "CANCELLED"
+        and evidence.get("second_status") == "CANCELLED"
+        and evidence.get("action_count") == 1
+        and evidence.get("same_cancelled_at") is True,
+        "mandate_09": evidence.get("mandate_restore") is False
+        and evidence.get("status") == "CANCELLED"
+        and evidence.get("restore_route") is False,
+    }
+    return bool(predicates.get(case_id, False))
+
+
+def shared_case_passes(case_id: str, evidence: dict[str, Any]) -> bool:
+    if evidence.get("reconciliation_valid") is not True:
+        return False
+    if case_id in ZERO_CALL_CASES:
+        return (
+            evidence.get("adapter_call_count") == 0
+            and evidence.get("mutation_free") is True
+        )
+    if case_id == "transfer_07":
+        return evidence.get("submit_call_count") == 1 and evidence.get("status") == "SUCCEEDED"
+    if case_id == "transfer_09":
+        return (
+            evidence.get("status_before") == "SUCCEEDED"
+            and evidence.get("status_after") == "SUCCEEDED"
+            and evidence.get("same_bank_reference") is True
+        )
+    if case_id == "mandate_07":
+        return evidence.get("transaction_evidence") is True and evidence.get("matching_mandate") is False
+    return False
 
 
 def _direct_evidence(case_id: str, service: BankService, settings: Settings) -> dict[str, Any]:
@@ -83,11 +165,16 @@ def _direct_evidence(case_id: str, service: BankService, settings: Settings) -> 
     if case_id == "transfer_04":
         try:
             TransferRequest(account_id="acc_daily", recipient_id="rec_1", amount_cents=0)
-        except Exception:
-            pass
+            error_code = None
+        except ValidationError as exc:
+            error_code = (
+                "INVALID_AMOUNT"
+                if any("amount_cents" in error["loc"] for error in exc.errors())
+                else "INVALID_REQUEST"
+            )
         with factory() as session:
             count = session.scalar(select(func.count()).select_from(Transfer))
-        return {"error_code": "INVALID_AMOUNT", "transfer_count": count, "balance_cents": service.get_balance("test_user", "acc_daily")["balance_cents"]}
+        return {"error_code": error_code, "transfer_count": count, "balance_cents": service.get_balance("test_user", "acc_daily")["balance_cents"]}
     if case_id == "transfer_05":
         quote = service.quote_transfer("test_user", TransferRequest(account_id="acc_daily", recipient_id="rec_1", amount_cents=1_000_000), now)
         result = service.submit_transfer("test_user", quote.quote_id, quote.params_hash, "accept-transfer-05")
@@ -124,7 +211,9 @@ def _direct_evidence(case_id: str, service: BankService, settings: Settings) -> 
 def _shared_evidence(case_id: str, service: BankService) -> tuple[dict[str, Any], str]:
     adapter = RecordingBankAdapter(ServiceBankAdapter(service))
     if case_id in ZERO_CALL_CASES:
-        return {"adapter_call_count": len(adapter.snapshot().calls), "balance_cents": service.get_balance("test_user", "acc_daily")["balance_cents"]}, "B/C must enforce clarification, consent, protection, or analysis-only policy"
+        before = _bank_snapshot(service)
+        after = _bank_snapshot(service)
+        return {"adapter_call_count": len(adapter.snapshot().calls), "before": before, "after": after, "mutation_free": before == after}, "B/C must enforce clarification, consent, protection, or analysis-only policy"
     now = datetime.now(timezone.utc)
     if case_id == "transfer_07":
         quote = service.quote_transfer("test_user", TransferRequest(account_id="acc_daily", recipient_id="rec_1", amount_cents=50_000), now)
@@ -135,7 +224,7 @@ def _shared_evidence(case_id: str, service: BankService) -> tuple[dict[str, Any]
         quote = service.quote_transfer("test_user", TransferRequest(account_id="acc_daily", recipient_id="rec_1", amount_cents=50_000), now)
         result = service.submit_transfer("test_user", quote.quote_id, quote.params_hash, "accept-transfer-09")
         after = service.get_transfer_status("test_user", result.transfer_id)
-        return {"status_before": result.status, "status_after": after.status, "bank_reference": after.bank_reference}, "B must explain that reversal requires a new authorized operation"
+        return {"status_before": result.status, "status_after": after.status, "bank_reference": after.bank_reference, "same_bank_reference": result.bank_reference == after.bank_reference}, "B must explain that reversal requires a new authorized operation"
     if case_id == "mandate_07":
         factory = service.repository.session_factory
         with factory() as session:
@@ -159,10 +248,16 @@ def run_role_a_acceptance(
         try:
             if case_id in DIRECT_CASES:
                 evidence = _direct_evidence(case_id, service, settings)
-                results.append(RoleACaseResult(case_id=case_id, owner=str(row["owner"]), status="PASS", evidence=evidence))
+                with service.repository.session_factory() as session:
+                    evidence["reconciliation_valid"] = reconcile(session).valid
+                status = "PASS" if direct_case_passes(case_id, evidence) else "FAIL"
+                results.append(RoleACaseResult(case_id=case_id, owner=str(row["owner"]), status=status, evidence=evidence))
             else:
                 evidence, prerequisite = _shared_evidence(case_id, service)
-                results.append(RoleACaseResult(case_id=case_id, owner=str(row["owner"]), status="A_SIDE_PASS", evidence=evidence, remaining_prerequisite=prerequisite))
+                with service.repository.session_factory() as session:
+                    evidence["reconciliation_valid"] = reconcile(session).valid
+                status = "A_SIDE_PASS" if shared_case_passes(case_id, evidence) else "FAIL"
+                results.append(RoleACaseResult(case_id=case_id, owner=str(row["owner"]), status=status, evidence=evidence, remaining_prerequisite=prerequisite))
         except Exception as exc:
             results.append(RoleACaseResult(case_id=case_id, owner=str(row["owner"]), status="FAIL", evidence={"exception_type": type(exc).__name__, "message": str(exc)[:240]}))
         finally:

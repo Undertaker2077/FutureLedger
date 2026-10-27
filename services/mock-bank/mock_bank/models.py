@@ -80,6 +80,7 @@ class Transaction(Base):
         ),
         CheckConstraint("amount_cents > 0"),
         CheckConstraint("direction IN ('IN','OUT')"),
+        CheckConstraint("kind IN ('expense','refund','income','transfer')"),
         CheckConstraint("status IN ('POSTED','PENDING','FAILED')"),
         Index("transaction_scope_date", "user_id", "posted_at"),
         Index("transaction_category_date", "user_id", "category", "posted_at"),
@@ -118,6 +119,7 @@ class TransferQuote(Base):
         ),
         CheckConstraint("amount_cents > 0"),
         CheckConstraint("fee_cents >= 0"),
+        CheckConstraint("currency = 'CNY'"),
         {"schema": "bank"},
     )
 
@@ -150,6 +152,7 @@ class Transfer(Base):
         ),
         CheckConstraint("amount_cents > 0"),
         CheckConstraint("fee_cents >= 0"),
+        CheckConstraint("currency = 'CNY'"),
         CheckConstraint("status IN ('PENDING','SUCCEEDED','FAILED')"),
         {"schema": "bank"},
     )

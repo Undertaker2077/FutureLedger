@@ -152,3 +152,17 @@ def test_expired_quote_leaves_state_unchanged(
     assert raised.value.code == "QUOTE_EXPIRED"
     assert counts(seeded_session_factory) == before
 
+
+def test_quote_uses_configured_ttl(
+    seeded_session_factory: sessionmaker[Session],
+) -> None:
+    now = datetime.now(timezone.utc)
+    service = BankService(
+        BankRepository(seeded_session_factory, "test-internal-token"),
+        quote_ttl_seconds=17,
+    )
+
+    quote = service.quote_transfer("test_user", transfer_request(), now)
+
+    assert quote.expires_at - now == timedelta(seconds=17)
+

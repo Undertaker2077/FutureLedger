@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from mock_bank.contracts import TransferRequest
 from mock_bank.domain import BankError
-from mock_bank.models import Account
+from mock_bank.models import Account, TransferQuote
 from mock_bank.repository import BankRepository
 from mock_bank.service import BankService
 
@@ -91,4 +91,26 @@ def test_insufficient_funds_is_stable_after_later_deposit(
     assert replay.status == "FAILED"
     assert replay.failure_code == "INSUFFICIENT_FUNDS"
     assert service.get_balance("test_user", "acc_daily")["balance_cents"] == 1_000_000
+
+
+@pytest.mark.parametrize("amount", [50_000, 950_000])
+def test_bound_key_replays_after_quote_expires(
+    service: BankService,
+    seeded_session_factory: sessionmaker[Session],
+    amount: int,
+) -> None:
+    quote = service.quote_transfer("test_user", request(amount), datetime.now(timezone.utc))
+    first = service.submit_transfer(
+        "test_user", quote.quote_id, quote.params_hash, f"expiry-replay-{amount}"
+    )
+    with seeded_session_factory.begin() as session:
+        stored_quote = session.get(TransferQuote, quote.quote_id)
+        stored_quote.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+
+    replay = service.submit_transfer(
+        "test_user", quote.quote_id, quote.params_hash, f"expiry-replay-{amount}"
+    )
+    assert replay.transfer_id == first.transfer_id
+    assert replay.status == first.status
+    assert getattr(replay, "__replayed__") is True
 

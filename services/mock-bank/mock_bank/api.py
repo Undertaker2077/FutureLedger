@@ -28,7 +28,7 @@ def create_app(
     resolved_settings = settings or Settings.from_env()
     factory = session_factory or create_session_factory(resolved_settings)
     repository = BankRepository(factory, resolved_settings.service_token)
-    service = BankService(repository)
+    service = BankService(repository, resolved_settings.quote_ttl_seconds)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -222,6 +222,14 @@ def create_app(
                 raise BankError(
                     "UNSUPPORTED", "unknown mock fault point", http_status=400
                 ) from exc
+        if fault == FaultPoint.TEMPORARY_UNAVAILABLE:
+            raise BankError(
+                "UPSTREAM_UNAVAILABLE",
+                "simulated bank outage",
+                recoverable=True,
+                next_action="retry later with the same idempotency key",
+                http_status=503,
+            )
         result = service.submit_transfer(
             subject, body.quote_id, body.params_hash, idempotency_key, fault
         )
