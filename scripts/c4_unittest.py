@@ -16,7 +16,10 @@ class Evidence(unittest.TextTestResult):
     def __init__(self,*args,**kwargs):
         super().__init__(*args,**kwargs)
         self.items={}
-    def identifier(self,test): return unittest.TestCase.id(test)
+    def identifier(self,test):
+        # Discovery/import errors are represented by unittest._ErrorHolder,
+        # which has no _testMethodName and cannot be passed to TestCase.id.
+        return unittest.TestCase.id(test) if hasattr(test,'_testMethodName') else str(test)
     def mark(self,test,status):
         identifier=self.identifier(test)
         self.items[identifier]={'id':identifier,'status':status}

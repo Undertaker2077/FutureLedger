@@ -3,6 +3,7 @@
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -36,7 +37,7 @@ class FixtureTimezoneTests(unittest.TestCase):
     def test_utc_instants_are_filtered_by_shanghai_business_date(self):
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/'fixture.sqlite'
-            with sqlite3.connect(path) as db:
+            with closing(sqlite3.connect(path)) as db:
                 db.execute('CREATE TABLE accounts(id TEXT,user_id TEXT)')
                 db.execute("INSERT INTO accounts VALUES('acc_daily','test_user')")
                 db.execute('CREATE TABLE transactions(id TEXT,user_id TEXT,account_id TEXT,status TEXT,posted_at TEXT,category TEXT,kind TEXT,direction TEXT,amount_cents INTEGER)')
