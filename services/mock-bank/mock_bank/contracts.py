@@ -76,4 +76,3 @@ class ResponseEnvelope(StrictContract):
     data: Any | None = None
     error: ErrorBody | None = None
     request_id: StrictStr
-

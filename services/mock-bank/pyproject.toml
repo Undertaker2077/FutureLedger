@@ -25,4 +25,3 @@ testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 include = ["mock_bank*"]
-

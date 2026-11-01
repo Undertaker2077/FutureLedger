@@ -23,4 +23,3 @@ def create_session_factory(settings: Settings) -> sessionmaker[Session]:
 def session_scope(factory: sessionmaker[Session]) -> Iterator[Session]:
     with factory.begin() as session:
         yield session
-

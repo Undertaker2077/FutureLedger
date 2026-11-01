@@ -231,4 +231,3 @@ class BankService:
         result = self._mandate_result(mandate)
         object.__setattr__(result, "__replayed__", replayed)
         return result
-

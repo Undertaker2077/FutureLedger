@@ -30,4 +30,3 @@ class Settings:
                 os.environ.get("BANK_ENVIRONMENT", "development"),
             ),
         )
-

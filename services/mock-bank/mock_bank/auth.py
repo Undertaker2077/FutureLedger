@@ -25,4 +25,3 @@ def authenticate(
             "UNAUTHENTICATED", "authenticated subject is required", http_status=401
         )
     return subject
-

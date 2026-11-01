@@ -113,4 +113,3 @@ def test_bound_key_replays_after_quote_expires(
     assert replay.transfer_id == first.transfer_id
     assert replay.status == first.status
     assert getattr(replay, "__replayed__") is True
-

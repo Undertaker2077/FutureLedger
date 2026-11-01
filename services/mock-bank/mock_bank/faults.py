@@ -15,4 +15,3 @@ class InjectedBankFault(RuntimeError):
 
 class DroppedBankResponse(RuntimeError):
     pass
-

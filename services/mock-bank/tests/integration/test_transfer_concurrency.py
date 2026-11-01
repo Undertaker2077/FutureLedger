@@ -81,4 +81,3 @@ def test_competing_keys_cannot_overdraw_and_evidence_is_one_to_one(
                 Transaction.transfer_id.is_not(None)
             )
         ) == succeeded
-

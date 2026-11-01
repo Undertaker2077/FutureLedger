@@ -165,4 +165,3 @@ def test_quote_uses_configured_ttl(
     quote = service.quote_transfer("test_user", transfer_request(), now)
 
     assert quote.expires_at - now == timedelta(seconds=17)
-

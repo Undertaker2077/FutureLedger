@@ -17,4 +17,3 @@ services:
 
 volumes:
   futureledger-bank-postgres-18:
-

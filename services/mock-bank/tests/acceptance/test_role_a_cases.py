@@ -42,4 +42,3 @@ def test_direct_case_predicates_fail_closed_on_wrong_evidence() -> None:
         "transfer_04",
         {"error_code": "OTHER", "transfer_count": 0, "balance_cents": 900_000},
     ) is False
-

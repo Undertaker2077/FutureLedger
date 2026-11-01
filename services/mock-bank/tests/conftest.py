@@ -46,4 +46,3 @@ def seeded_session_factory(
     factory = sessionmaker(bind=engine, class_=Session, expire_on_commit=False)
     yield factory
     engine.dispose()
-

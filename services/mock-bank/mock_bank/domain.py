@@ -65,4 +65,3 @@ def validate_idempotency_key(key: str) -> str:
             "idempotency key must contain 8-128 visible ASCII characters"
         )
     return key
-

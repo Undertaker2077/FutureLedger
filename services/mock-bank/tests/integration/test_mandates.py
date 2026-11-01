@@ -95,4 +95,3 @@ def test_already_cancelled_mandate_never_reopens(service: BankService) -> None:
     )
     assert first.status == second.status == "CANCELLED"
     assert first.cancelled_at == second.cancelled_at
-

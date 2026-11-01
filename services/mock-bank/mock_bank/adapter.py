@@ -278,4 +278,3 @@ class RecordingBankAdapter:
 
     def get_mandate_status(self, subject: str, mandate_id: str):
         return self._record("get_mandate_status", subject, {"mandate_id": mandate_id}, lambda: self.wrapped.get_mandate_status(subject, mandate_id))
-

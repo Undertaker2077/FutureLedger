@@ -64,4 +64,3 @@ def test_adapter_mandate_contract_and_error_codes(adapter) -> None:
     with pytest.raises(BankError) as raised:
         adapter.get_balance("test_user", "acc_other")
     assert raised.value.code in {"FORBIDDEN", "NOT_FOUND"}
-

@@ -437,4 +437,3 @@ class BankRepository:
                 next_action="restart pagination without a cursor",
                 http_status=400,
             ) from exc
-
