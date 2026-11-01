@@ -75,13 +75,26 @@ class AnalyticsBoundaryTests(unittest.TestCase):
             "limit": 20,
         })
 
-    def test_transfer_is_not_consumption(self):
+    def test_outgoing_transfer_counts_as_demo_outflow(self):
         from demo.query import Ledger
 
         result = Ledger(self.db).execute(self._plan(metric="gross_expense", category="转账"), "test_user")
 
-        self.assertEqual(result["rows"], [{"value_cents": 0}])
-        self.assertEqual(result["evidence_ids"], [])
+        # Formal C gold retains consumption-only semantics; the interactive
+        # ledger follows the checklist's outflow semantics independently.
+        import sqlite3
+        with sqlite3.connect(self.db) as conn:
+            expected = conn.execute(
+                "SELECT id,amount_cents FROM transactions WHERE user_id=? "
+                "AND account_id IN (SELECT id FROM accounts WHERE user_id=?) "
+                "AND status='POSTED' AND category='转账' AND kind='transfer' "
+                "AND direction='OUT' AND substr(posted_at,1,10)>=? "
+                "AND substr(posted_at,1,10)<? ORDER BY id",
+                ('test_user', 'test_user', '2026-09-01', '2026-10-01'),
+            ).fetchall()
+        self.assertTrue(expected)
+        self.assertEqual(result["rows"], [{"value_cents": sum(row[1] for row in expected)}])
+        self.assertEqual(result["evidence_ids"], [row[0] for row in expected])
 
     def test_income_excludes_refund_and_internal_transfer(self):
         from demo.query import Ledger
