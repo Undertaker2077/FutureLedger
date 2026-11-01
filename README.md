@@ -13,6 +13,8 @@ FutureLedger 是一个本地运行的个人账本问答演示。用户用自然�
 - 查询结果不显示 IntentPlan、SQL 或内部流水 ID。
 - 本地离线模式无需 API key；也支持 OpenAI、DeepSeek，以及支持 OpenAI-compatible Chat Completions JSON mode 的模型服务。
 
+完整的实际功能、示范问题、预期结果和回归命令见 [`docs/功能检验清单.md`](docs/功能检验清单.md)。
+
 ## 快速启动
 
 需要 Python 3.10 或更新版本。先从 GitHub 仓库页面的 **Code** 菜单复制仓库地址，再在终端运行：
