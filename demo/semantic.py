@@ -19,12 +19,12 @@ METRICS = {
     "transfer_count": "转账笔数",
 }
 METRIC_DEFINITIONS = {
-    "gross_expense": "已入账 expense/OUT 正整数分之和，不扣退款；转账单独统计",
+    "gross_expense": "已入账 expense/OUT 与 transfer/OUT 正整数分之和，不扣退款；转出按用途类别计入支出",
     "refund": "已入账 refund/IN 金额之和，按退款入账日期计入",
-    "net_expense": "已入账 expense/OUT 金额之和，减去同一日期范围内入账的退款",
-    "income": "已入账 income/IN 金额之和；不含退款和账户互转",
-    "transaction_count": "已入账消费和退款流水的条数，不把账户互转算作消费",
-    "avg_expense": "已入账 expense/OUT 金额之和除以对应消费出账笔数；无出账时为空值",
+    "net_expense": "已入账 expense/OUT 与 transfer/OUT 金额之和，减去同一日期范围内入账的退款",
+    "income": "已入账 income/IN 与 transfer/IN 金额之和；不含退款",
+    "transaction_count": "已入账消费、退款和转账流水的条数",
+    "avg_expense": "已入账 expense/OUT 与 transfer/OUT 金额之和除以对应出账笔数；无出账时为空值",
     "transfer_amount": "已入账 transfer/OUT 金额之和；可按选定用途类别统计",
     "transfer_count": "已入账转账流水的条数",
 }

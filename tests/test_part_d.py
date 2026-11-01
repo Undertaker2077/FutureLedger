@@ -75,21 +75,21 @@ class AnalyticsBoundaryTests(unittest.TestCase):
             "limit": 20,
         })
 
-    def test_transfer_is_not_consumption(self):
+    def test_outgoing_transfer_is_counted_as_expense(self):
         from demo.query import Ledger
 
         result = Ledger(self.db).execute(self._plan(metric="gross_expense", category="转账"), "test_user")
 
-        self.assertEqual(result["rows"], [{"value_cents": 0}])
-        self.assertEqual(result["evidence_ids"], [])
+        self.assertEqual(result["rows"], [{"value_cents": 50000}])
+        self.assertEqual(result["evidence_ids"], ["tx_003705"])
 
-    def test_income_excludes_refund_and_internal_transfer(self):
+    def test_income_excludes_outgoing_transfer(self):
         from demo.query import Ledger
 
         result = Ledger(self.db).execute(self._plan(metric="income", category="转账"), "test_user")
 
         self.assertEqual(result["rows"], [{"value_cents": 0}])
-        self.assertEqual(result["evidence_ids"], [])
+        self.assertEqual(result["evidence_ids"], ["tx_003705"])
 
     def test_failed_and_pending_are_excluded(self):
         import sqlite3

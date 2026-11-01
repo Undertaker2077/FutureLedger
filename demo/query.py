@@ -9,20 +9,20 @@ from pathlib import Path
 from .semantic import CATEGORIES, IntentPlan
 
 AMOUNT = {
-    "gross_expense": "COALESCE(SUM(CASE WHEN kind='expense' AND direction='OUT' THEN amount_cents ELSE 0 END),0)",
+    "gross_expense": "COALESCE(SUM(CASE WHEN kind IN ('expense','transfer') AND direction='OUT' THEN amount_cents ELSE 0 END),0)",
     "refund": "COALESCE(SUM(CASE WHEN kind='refund' AND direction='IN' THEN amount_cents ELSE 0 END),0)",
-    "net_expense": "COALESCE(SUM(CASE WHEN kind='expense' AND direction='OUT' THEN amount_cents WHEN kind='refund' AND direction='IN' THEN -amount_cents ELSE 0 END),0)",
-    "income": "COALESCE(SUM(CASE WHEN kind='income' AND direction='IN' THEN amount_cents ELSE 0 END),0)",
-    "transaction_count": "COALESCE(SUM(CASE WHEN kind IN ('expense','refund') THEN 1 ELSE 0 END),0)",
-    "avg_expense": "ROUND(SUM(CASE WHEN kind='expense' AND direction='OUT' THEN amount_cents ELSE 0 END)*1.0/NULLIF(SUM(CASE WHEN kind='expense' AND direction='OUT' THEN 1 ELSE 0 END),0),2)",
+    "net_expense": "COALESCE(SUM(CASE WHEN kind IN ('expense','transfer') AND direction='OUT' THEN amount_cents WHEN kind='refund' AND direction='IN' THEN -amount_cents ELSE 0 END),0)",
+    "income": "COALESCE(SUM(CASE WHEN kind IN ('income','transfer') AND direction='IN' THEN amount_cents ELSE 0 END),0)",
+    "transaction_count": "COALESCE(SUM(CASE WHEN kind IN ('expense','refund','transfer') THEN 1 ELSE 0 END),0)",
+    "avg_expense": "ROUND(SUM(CASE WHEN kind IN ('expense','transfer') AND direction='OUT' THEN amount_cents ELSE 0 END)*1.0/NULLIF(SUM(CASE WHEN kind IN ('expense','transfer') AND direction='OUT' THEN 1 ELSE 0 END),0),2)",
     "transfer_amount": "COALESCE(SUM(CASE WHEN kind='transfer' AND direction='OUT' THEN amount_cents ELSE 0 END),0)",
     "transfer_count": "COALESCE(SUM(CASE WHEN kind='transfer' AND direction='OUT' THEN 1 ELSE 0 END),0)",
 }
 GROUP = {"category": "category", "merchant": "merchant", "month": "substr(posted_at,1,7)", "account": "account_id"}
 KINDS = {
-    "gross_expense": ("expense",), "refund": ("refund",),
-    "net_expense": ("expense", "refund"), "income": ("income",),
-    "transaction_count": ("expense", "refund"), "avg_expense": ("expense",),
+    "gross_expense": ("expense", "transfer"), "refund": ("refund",),
+    "net_expense": ("expense", "transfer", "refund"), "income": ("income", "transfer"),
+    "transaction_count": ("expense", "refund", "transfer"), "avg_expense": ("expense", "transfer"),
     "transfer_amount": ("transfer",), "transfer_count": ("transfer",),
 }
 # Detail views are ledger activity views. They keep transfer rows visible for
