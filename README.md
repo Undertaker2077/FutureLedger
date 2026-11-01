@@ -139,3 +139,19 @@ python3 scripts/run_benchmark.py
 ```
 
 这些检查不需要模型 API key。生产身份认证、真实银行服务和部署沙箱尚未实现；现金流接口是本地合成数据演示，不代表真实账户可用余额。
+
+## B 部分：安全执行门
+
+`services/api/execution/` 和 `services/worker/` 提供与 Agent 解耦的写操作执行门。它接收上游规划器生成的操作参数，但风险级别由服务端按日累计额度重新计算，不能由模型或浏览器授予。
+
+执行顺序是：创建操作快照 → 用户确认参数和计划版本 → 红色操作独立强验证 → 原子预占日额度 → 写入 Outbox → Worker 通过 `BankAdapter` 提交 → 查询最终银行状态。密码不会写入操作参数、Outbox 或审计摘要。
+
+本地模块可以直接运行 B 的验收测试：
+
+```bash
+python3 -m unittest discover -s tests -p 'test_execution_gate.py' -v
+```
+
+测试覆盖确认过期、参数绑定、重复幂等、两笔 600 元并发额度竞态，以及银行成功但响应丢失后的 `PENDING_UNKNOWN` 查证。`services/api/execution/api.py` 提供可挂载到 FastAPI 的 `/api/operations` 工厂；若使用 SQLite，连接应通过 `ExecutionService.connect()` 打开。
+
+B 的接口和未覆盖边界记录在 [执行门实现计划](docs/plans/2026-11-01-execution-gate.md)。当前内置的 `InMemoryBank` 只用于本地测试，不是生产银行连接。

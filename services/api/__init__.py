@@ -1,1 +1,1 @@
-"""Application API composition root."""
+"""HTTP-facing service packages."""
