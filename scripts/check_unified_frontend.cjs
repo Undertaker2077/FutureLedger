@@ -10,14 +10,16 @@ const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
 assert(scripts.length, 'live frontend must contain an inline script');
 const code = scripts.at(-1)[1];
 
-function node() {
+function node(tag = 'div') {
   return {
+    tag,
     innerHTML: '', textContent: '', value: '', hidden: false, disabled: false,
-    className: '', style: {}, dataset: {}, children: [],
+    className: '', style: {}, dataset: {}, children: [], attributes: {},
     listeners: {},
     classList: {add() {}, remove() {}, toggle() {}},
     addEventListener(type, handler) { this.listeners[type] = handler; },
-    setAttribute() {}, removeAttribute() {}, focus() {},
+    setAttribute(name, value) { this.attributes[name] = String(value); },
+    removeAttribute(name) { delete this.attributes[name]; }, focus() {},
     showModal() {}, close() {}, querySelector() { return node(); },
     append(...items) { this.children.push(...items); }, replaceChildren(...items) { this.children = items; },
   };
@@ -26,7 +28,9 @@ function node() {
 const nodes = {};
 const document = {
   getElementById(id) { return nodes[id] ??= node(); },
-  createElement() { return node(); },
+  createElement(tag) { return node(tag); },
+  createElementNS(namespaceURI, tag) { const item = node(tag); item.namespaceURI = namespaceURI; return item; },
+  createTextNode(text) { return {tag: '#text', textContent: String(text), children: []}; },
 };
 const context = {
   document,
@@ -38,6 +42,26 @@ const context = {
 };
 vm.createContext(context);
 vm.runInContext(code, context);
+
+context.localStorage.getItem = () => '{"test_user":{}}';
+let sanitized = vm.runInContext('loadChats()', context);
+assert.deepStrictEqual(Object.keys(sanitized), ['test_user']);
+assert(Array.isArray(sanitized.test_user), 'malformed per-user storage must become an empty chat list');
+context.localStorage.getItem = () => '{"test_user":[{}]}';
+sanitized = vm.runInContext('loadChats()', context);
+assert(Array.isArray(sanitized.test_user) && sanitized.test_user.length === 0, 'malformed chat entries must be discarded');
+
+function descendants(item) {
+  return [item, ...(item.children || []).flatMap(descendants)];
+}
+vm.runInContext("loggedInUser='test_user'; activeChat={sessionId:'session-chart',messages:[]}", context);
+context.chartCard = node('section');
+vm.runInContext("renderResult(chartCard,{answer:'分类',chart:'bar',rows:[{group_key:'餐饮',value_cents:1200}],valueFormat:'money'})", context);
+assert(descendants(context.chartCard).some(item => item.style?.cssText?.includes('height:9px')), 'bar results must render bars');
+context.chartCard = node('section');
+vm.runInContext("renderResult(chartCard,{answer:'趋势',chart:'line',rows:[{group_key:'2026-09',series_key:'餐饮',value_cents:1200}],valueFormat:'money'})", context);
+assert(descendants(context.chartCard).some(item => item.tag === 'svg'), 'line results must render an SVG chart');
+assert(html.includes('chart:response.chart'), 'chat responses must retain the API chart type');
 
 const preservedPanels = {
   home: ['从一件事开始', '一个目标，几种安排', '接下来的固定支出'],
@@ -64,6 +88,8 @@ const nav = html.split('<nav id="nav"', 2)[1].split('</nav>', 1)[0];
 assert(nav.indexOf('评审工作台') < nav.indexOf('智能体小智'));
 assert(html.includes('id="authGate"'));
 assert(html.includes('id="assistantRail"'));
+const mobileCss = html.split('@media(max-width:730px)', 2)[1].split('</style>', 1)[0];
+assert(!mobileCss.includes('.nav-user,.nav-note'), 'mobile layout must keep the only logout control reachable');
 
 (async () => {
   let sessionCalls = 0;
@@ -81,6 +107,57 @@ assert(html.includes('id="assistantRail"'));
   document.getElementById('authPassword').value = 'test-password-123';
   await nodes.authForm.listeners.submit({preventDefault() {}});
   assert.strictEqual(sessionCalls, 1, 'login must create or renew exactly one server session');
+
+  const submit = node('button');
+  const transferForm = node('form');
+  transferForm.querySelector = () => submit;
+  context.transferMessage = {role: 'assistant', text: '确认转账', actionId: 'action-1', actionStatus: 'pending'};
+  vm.runInContext('confirmAction(transferMessage)', context);
+  nodes.reauthPassword.required = true;
+  nodes.reauthPassword.value = 'test-password-123';
+  context.fetch = async path => {
+    assert(path.endsWith('/authorize'));
+    return {ok: true, status: 200, json: async () => ({authorization_id: 'authorization-1'})};
+  };
+  await nodes.reauthForm.listeners.submit({preventDefault() {}, target: transferForm});
+  assert.strictEqual(nodes.reauthPassword.required, false, 'final transfer confirmation must not require a second password');
+  assert.strictEqual(nodes.reauthPassword.disabled, true, 'verified password input must remain disabled during final confirmation');
+
+  context.fetch = async path => {
+    assert(path.endsWith('/confirm'));
+    return {ok: true, status: 200, json: async () => ({message: '转账成功'})};
+  };
+  await nodes.reauthForm.listeners.submit({preventDefault() {}, target: transferForm});
+  assert.strictEqual(nodes.reauthGate.hidden, true, 'successful final confirmation must close reauthentication');
+  assert.strictEqual(nodes.reauthPassword.required, true, 'a later transfer must require its own password');
+
+  context.wrongPasswordMessage = {role: 'assistant', text: '确认转账', actionId: 'action-2', actionStatus: 'pending'};
+  vm.runInContext("authToken='token'; confirmAction(wrongPasswordMessage)", context);
+  nodes.reauthPassword.value = 'wrong-password';
+  context.fetch = async () => ({
+    ok: false,
+    status: 401,
+    json: async () => ({detail: {code: 'BAD_PASSWORD', message: '密码错误'}}),
+  });
+  await nodes.reauthForm.listeners.submit({preventDefault() {}, target: transferForm});
+  assert.strictEqual(vm.runInContext('authToken', context), 'token', 'wrong transfer password must not log out the app session');
+  assert.strictEqual(nodes.reauthGate.hidden, false, 'wrong transfer password must remain retryable in reauthentication');
+
+  context.restartMessage = {role: 'assistant', text: '确认转账', actionId: 'lost-action', actionStatus: 'pending'};
+  vm.runInContext("confirmAction(restartMessage); $('appShell').hidden=false; $('authGate').hidden=true", context);
+  context.fetch = async path => path === '/api/sessions' ? ({
+    ok: false,
+    status: 401,
+    json: async () => ({detail: {code: 'AUTH_REQUIRED', message: '登录已失效'}}),
+  }) : ({
+    ok: false,
+    status: 404,
+    json: async () => ({detail: {code: 'ACTION_NOT_FOUND', message: '操作不存在'}}),
+  });
+  await nodes.reauthForm.listeners.submit({preventDefault() {}, target: transferForm});
+  assert.strictEqual(nodes.appShell.hidden, true, 'lost action plus expired session must hide stale app content');
+  assert.strictEqual(nodes.authGate.hidden, false, 'lost action after restart must return to login');
+  assert.strictEqual(nodes.reauthGate.hidden, true, 'returning to login must dismiss the transfer overlay');
 
   context.fetch = async () => ({
     ok: false,
