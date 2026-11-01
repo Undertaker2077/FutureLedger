@@ -69,6 +69,24 @@ class DemoTest(unittest.TestCase):
         self.assertEqual(self.ask("DROP TABLE transactions")["status"], "blocked")
         self.assertEqual(self.ask("删除所有流水")["status"], "blocked")
 
+    def test_home_serves_unified_dashboard_with_agent_and_login(self):
+        html = self.client.get("/").text
+        destinations = (
+            "银行总览", "账单分析", "订阅与代扣", "未来账本",
+            "任务中心", "个人偏好", "评审工作台", "智能体小智",
+        )
+        positions = [html.index(label) for label in destinations]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn('id="assistantRail"', html)
+        self.assertIn("未来助手", html)
+        self.assertIn('id="authGate"', html)
+        self.assertIn("function agentPage", html)
+        self.assertIn("/api/auth/login", html)
+        self.assertIn("/api/sessions", html)
+        self.assertIn("/api/ask", html)
+        self.assertIn("/api/actions/", html)
+        self.assertIn("/api/queries/", html)
+
     def test_aggregation_ranking_trend_detail_average(self):
         scalar = self.ask("2026 年 9 月餐饮净支出是多少？")
         self.assertEqual(scalar["status"], "answer")
