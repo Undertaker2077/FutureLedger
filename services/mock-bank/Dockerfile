@@ -7,4 +7,3 @@ COPY . .
 
 ENV PYTHONPATH=/app
 CMD ["uvicorn", "mock_bank.api:app", "--host", "0.0.0.0", "--port", "8001"]
-
