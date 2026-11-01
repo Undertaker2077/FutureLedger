@@ -173,6 +173,7 @@ class ExecutionService:
 
     def create_operation(self, *, user_id: str, account_id: str, recipient_user_id: str,
                          amount_cents: int, plan_id: str = "transfer", plan_version: int = 1,
+                         execution_date: str | None = None,
                          idempotency_key: str | None = None) -> dict[str, Any]:
         if amount_cents <= 0:
             raise ExecutionError("INVALID_AMOUNT", "金额必须为正数。")
@@ -185,6 +186,8 @@ class ExecutionService:
         reserved = self.db.execute("SELECT COALESCE(SUM(amount_cents),0) FROM quota_reservations WHERE user_id=? AND business_date=? AND state IN ('RESERVED','COMMITTED')", (user_id, business_date)).fetchone()[0]
         risk = "RED" if reserved + amount_cents > THRESHOLD_CENTS else "YELLOW"
         params = {"account_id": account_id, "recipient_user_id": recipient_user_id, "amount_cents": amount_cents}
+        if execution_date is not None:
+            params["execution_date"] = execution_date
         op_id = "op_" + secrets.token_urlsafe(12)
         expires = now + CONFIRM_TTL
         self.db.execute("INSERT INTO operations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -319,6 +322,28 @@ class ExecutionService:
     def status(self, operation_id: str, *, user_id: str) -> dict[str, Any]:
         return self._view(self._owned(operation_id, user_id))
 
+    def lookup_by_key(self, *, user_id: str, idempotency_key: str) -> dict[str, Any] | None:
+        row = self.db.execute("SELECT * FROM operations WHERE user_id=? AND idempotency_key=?", (user_id, idempotency_key)).fetchone()
+        return self._view(row) if row else None
+
+    def invalidate(self, operation_id: str, *, user_id: str) -> dict[str, Any]:
+        row = self._owned(operation_id, user_id)
+        if row["status"] in {"SUCCEEDED", "SUBMITTING", "PENDING_UNKNOWN", "ENQUEUED"}:
+            raise ExecutionError("PENDING_UNKNOWN", "已提交操作必须先查证，不能静默失效。", status=row["status"])
+        self._set_status(operation_id, "EXPIRED")
+        self._audit(user_id, operation_id, "OPERATION_INVALIDATED", {})
+        self.db.commit()
+        return self.status(operation_id, user_id=user_id)
+
+    def cancel_unsubmitted(self, operation_id: str, *, user_id: str) -> str:
+        row = self._owned(operation_id, user_id)
+        if row["status"] in {"SUBMITTING", "PENDING_UNKNOWN", "SUCCEEDED"}:
+            return "PENDING_UNKNOWN" if row["status"] != "SUCCEEDED" else "ALREADY_SUBMITTED"
+        self._set_status(operation_id, "EXPIRED")
+        self._audit(user_id, operation_id, "OPERATION_CANCELLED", {})
+        self.db.commit()
+        return "CANCELLED"
+
     def _owned(self, operation_id: str, user_id: str) -> sqlite3.Row:
         row = self.db.execute("SELECT * FROM operations WHERE id=? AND user_id=?", (operation_id, user_id)).fetchone()
         if row is None:
@@ -330,4 +355,10 @@ class ExecutionService:
 
     @staticmethod
     def _view(row: sqlite3.Row) -> dict[str, Any]:
-        return {"operation_id": row["id"], "status": row["status"], "risk_level": row["risk_level"], "amount_cents": row["amount_cents"], "plan_version": row["plan_version"], "params_hash": row["params_hash"], "idempotency_key": row["idempotency_key"], "confirm_expires_at": row["confirm_expires_at"], "bank_ref": row["bank_ref"]}
+        params = json.loads(row["params_json"])
+        return {"operation_id": row["id"], "plan_id": row["plan_id"], "status": row["status"],
+                "risk_level": row["risk_level"], "amount_cents": row["amount_cents"],
+                "account_id": row["account_id"], "recipient_user_id": row["recipient_user_id"],
+                "execution_date": params.get("execution_date"), "plan_version": row["plan_version"],
+                "params_hash": row["params_hash"], "idempotency_key": row["idempotency_key"],
+                "confirm_expires_at": row["confirm_expires_at"], "bank_ref": row["bank_ref"]}
