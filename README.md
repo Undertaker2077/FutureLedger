@@ -38,6 +38,26 @@ python3 -m uvicorn --app-dir "$PWD" demo.api:create_app --factory --host 127.0.0
 
 如需结束服务，在运行 Uvicorn 的终端按 `Ctrl+C`。再次启动时执行最后一条 Uvicorn 命令即可。第一次生成数据之后，无需每次重新运行 `generate_data.py`；重新生成会覆盖合成基准数据。
 
+## Vue 3 工作台（Part A 前端）
+
+`apps/web/` 是与现有 FastAPI Demo API 对接的 Vue 3 + TypeScript + Vite 工作台。先在一个终端启动上面的 FastAPI，再在另一个终端运行：
+
+```bash
+cd apps/web
+npm ci
+npm run dev
+```
+
+浏览器打开 Vite 显示的地址（通常为 `http://127.0.0.1:5173`）。Vite 会把 `/api` 请求代理到 `http://127.0.0.1:8000`。Vue 工作台必须通过登录页进入；查询使用 `/api/ask`，转账使用后端的密码复核和用途确认接口。Vue 工作台不会把 mock 模式作为正式 API 的回退路径。
+
+前端检查命令：
+
+```bash
+cd apps/web
+npm run check
+npm run build
+```
+
 ## Role A 模拟银行
 
 `services/mock-bank/` 提供独立的 FastAPI/PostgreSQL 模拟银行，覆盖账户、收款人、流水、报价、幂等转账、查证、平衡分录、代扣取消、复位和对账。它只使用合成数据；PostgreSQL 通过 Docker 运行，不需要安装到 `/Library/PostgreSQL/18`。本模块使用 Conda，完整命令、端口、环境变量及 B/C/F 交接见 [`services/mock-bank/README.md`](services/mock-bank/README.md)。

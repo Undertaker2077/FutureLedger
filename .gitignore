@@ -8,6 +8,8 @@ venv/
 env/
 .env/
 node_modules/
+apps/web/dist/
+apps/web/.npm-cache/
 .next/
 .DS_Store
 *.pt
