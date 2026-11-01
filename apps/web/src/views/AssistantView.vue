@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useWorkspace, type ChatMessage } from '../stores/workspace'
+import ResultCard from '../components/ResultCard.vue'
 
 const workspace = useWorkspace(); const draft = ref(''); const password = ref(''); const category = ref('购物'); const authorizationId = ref(''); const actionError = ref('')
 const suggestions = ['这个月的支出是多少？', '8月和9月的各项净支出', '上个月的收入明细', '我想存6000元买电脑，至少留3000元']
@@ -17,7 +18,6 @@ async function confirm(message: ChatMessage) {
   try { await workspace.confirmAction(message.action_id, authorizationId.value, category.value); authorizationId.value = '' }
   catch (error) { actionError.value = error instanceof Error ? error.message : '确认失败。' }
 }
-function displayRow(row: Record<string, unknown>) { return Object.entries(row).filter(([key]) => !['id', 'transaction_id'].includes(key)).map(([key, value]) => `${key}: ${value}`).join(' · ') }
 </script>
 <template>
   <div class="assistant-layout">
@@ -29,10 +29,8 @@ function displayRow(row: Record<string, unknown>) { return Object.entries(row).f
           <div v-if="message.role === 'assistant'" class="assistant-avatar small">✦</div>
           <div>
             <p>{{ message.text }}</p>
-            <div v-if="message.role === 'assistant' && message.rows?.length" class="result-box">
-              <div v-for="(row, rowIndex) in message.rows.slice(0, 20)" :key="rowIndex" class="result-row">{{ displayRow(row) }}</div>
-              <a v-if="message.query_id" class="text-link" :href="`/api/queries/${message.query_id}/export.csv?session_id=${encodeURIComponent(workspace.sessionId)}`" target="_blank">导出 CSV</a>
-            </div>
+            <ResultCard v-if="message.role === 'assistant' && (message.rows?.length || message.chart === 'metric_card')" :result="message" />
+            <a v-if="message.role === 'assistant' && message.query_id" class="text-link" :href="`/api/queries/${message.query_id}/export.csv?session_id=${encodeURIComponent(workspace.sessionId)}`" target="_blank">导出 CSV</a>
             <div v-if="message.status === 'confirmation_required'" class="transfer-card">
               <b>需要确认转账</b><p>{{ message.text }}</p>
               <label>登录密码<input v-model="password" type="password" minlength="12" autocomplete="current-password"></label>
