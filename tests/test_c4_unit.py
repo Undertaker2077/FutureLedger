@@ -38,12 +38,13 @@ class FixtureTimezoneTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path=Path(tmp)/'fixture.sqlite'
             with closing(sqlite3.connect(path)) as db:
-                db.execute('CREATE TABLE accounts(id TEXT,user_id TEXT)')
-                db.execute("INSERT INTO accounts VALUES('acc_daily','test_user')")
-                db.execute('CREATE TABLE transactions(id TEXT,user_id TEXT,account_id TEXT,status TEXT,posted_at TEXT,category TEXT,kind TEXT,direction TEXT,amount_cents INTEGER)')
-                db.executemany('INSERT INTO transactions VALUES(?,?,?,?,?,?,?,?,?)',[
-                    ('included','test_user','acc_daily','POSTED','2026-08-31T16:00:00+00:00','餐饮','expense','OUT',123),
-                    ('excluded','test_user','acc_daily','POSTED','2026-09-30T16:00:00+00:00','餐饮','expense','OUT',999)])
+                with db:
+                    db.execute('CREATE TABLE accounts(id TEXT,user_id TEXT)')
+                    db.execute("INSERT INTO accounts VALUES('acc_daily','test_user')")
+                    db.execute('CREATE TABLE transactions(id TEXT,user_id TEXT,account_id TEXT,status TEXT,posted_at TEXT,category TEXT,kind TEXT,direction TEXT,amount_cents INTEGER)')
+                    db.executemany('INSERT INTO transactions VALUES(?,?,?,?,?,?,?,?,?)',[
+                        ('included','test_user','acc_daily','POSTED','2026-08-31T16:00:00+00:00','餐饮','expense','OUT',123),
+                        ('excluded','test_user','acc_daily','POSTED','2026-09-30T16:00:00+00:00','餐饮','expense','OUT',999)])
             plan=AnalysisPlan.model_validate(dict(kind='analysis',dataset_id='personal_ledger',semantic_version=1,
                 metric='gross_expense',start='2026-09-01',end_exclusive='2026-10-01',filters={'category':'餐饮'},group_by=None,limit=100))
             result=FixtureAnalysis(path).analyze(plan,P)
