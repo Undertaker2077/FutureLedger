@@ -71,11 +71,12 @@ class DemoTest(unittest.TestCase):
 
     def test_home_serves_unified_dashboard_with_agent_and_login(self):
         html = self.client.get("/").text
+        nav = html.split('<nav id="nav"', 1)[1].split("</nav>", 1)[0]
         destinations = (
             "银行总览", "账单分析", "订阅与代扣", "未来账本",
             "任务中心", "个人偏好", "评审工作台", "智能体小智",
         )
-        positions = [html.index(label) for label in destinations]
+        positions = [nav.index(label) for label in destinations]
         self.assertEqual(positions, sorted(positions))
         self.assertIn('id="assistantRail"', html)
         self.assertIn("未来助手", html)
