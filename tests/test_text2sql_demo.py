@@ -317,8 +317,9 @@ class ProviderTest(unittest.IsolatedAsyncioTestCase):
         with patch.dict("os.environ", {"FUTURELEDGER_PROVIDER": "deepseek"}, clear=True):
             with self.assertRaisesRegex(ValueError, "FUTURELEDGER_API_KEY"):
                 ChatProvider()
-        with self.assertRaisesRegex(ValueError, "test-only"):
-            ChatProvider(provider="local")
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaisesRegex(ValueError, "test-only"):
+                ChatProvider(provider="local")
 
     async def test_openai_compatible_request_and_response(self):
         observed = {}
