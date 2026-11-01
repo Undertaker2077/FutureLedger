@@ -19,3 +19,5 @@ uploads/
 outputs/
 data/*.sqlite*
 benchmark/results.local.json
+
+*.tsbuildinfo
