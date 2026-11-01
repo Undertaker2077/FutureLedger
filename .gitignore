@@ -3,9 +3,17 @@
 !.env.example
 __pycache__/
 *.pyc
+venv/
 .venv/
+env/
+.env/
 node_modules/
 .next/
 .DS_Store
+*.pt
+*.pth
+*.ckpt
+uploads/
+outputs/
 data/*.sqlite*
 benchmark/results.local.json
