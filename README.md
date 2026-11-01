@@ -29,7 +29,7 @@ python3 scripts/generate_data.py
 export FUTURELEDGER_PROVIDER=deepseek  # 或 openai / compatible
 export FUTURELEDGER_API_KEY='YOUR_APIKEY'
 export FUTURELEDGER_MODEL='YOUR_MODEL_NAME'
-python3 -m uvicorn demo.api:create_app --factory --host 127.0.0.1 --port 8000
+python3 -m uvicorn --app-dir "$PWD" demo.api:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
 浏览器打开 <http://127.0.0.1:8000>。首次使用时选 **首次设置密码**，为演示用户 `test_user` 或 `isolation_user` 设置密码，然后登录。转账时会再次要求该密码。
@@ -65,7 +65,7 @@ API key 和模型名称都通过环境变量提供。请在启动 Uvicorn 的同
 export FUTURELEDGER_PROVIDER=deepseek
 export FUTURELEDGER_API_KEY='YOUR_APIKEY'
 export FUTURELEDGER_MODEL='YOUR_MODEL_NAME'
-python3 -m uvicorn demo.api:create_app --factory --host 127.0.0.1 --port 8000
+python3 -m uvicorn --app-dir "$PWD" demo.api:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
 把 `YOUR_APIKEY` 和 `YOUR_MODEL_NAME` 换成自己账户可用的值。DeepSeek 的默认 API Base URL 是 `https://api.deepseek.com`。
@@ -76,7 +76,7 @@ python3 -m uvicorn demo.api:create_app --factory --host 127.0.0.1 --port 8000
 export FUTURELEDGER_PROVIDER=openai
 export FUTURELEDGER_API_KEY='YOUR_APIKEY'
 export FUTURELEDGER_MODEL='YOUR_MODEL_NAME'
-python3 -m uvicorn demo.api:create_app --factory --host 127.0.0.1 --port 8000
+python3 -m uvicorn --app-dir "$PWD" demo.api:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
 **其他兼容 OpenAI Chat Completions 的模型服务**（例如提供兼容接口的国产模型服务）：
@@ -86,7 +86,7 @@ export FUTURELEDGER_PROVIDER=compatible
 export FUTURELEDGER_API_KEY='YOUR_APIKEY'
 export FUTURELEDGER_API_BASE='https://YOUR_PROVIDER_BASE_URL/v1'
 export FUTURELEDGER_MODEL='YOUR_MODEL_NAME'
-python3 -m uvicorn demo.api:create_app --factory --host 127.0.0.1 --port 8000
+python3 -m uvicorn --app-dir "$PWD" demo.api:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
 `FUTURELEDGER_API_BASE` 填服务商给出的 API 根地址；程序会在末尾追加 `/chat/completions`。模型名称必须填写服务商提供的准确 model ID，代码不会猜测。兼容服务须支持 Chat Completions 格式及 JSON mode（`response_format: json_object`）。如果服务商文档提供不同的 API Base、模型名或 JSON mode 要求，请按其文档设置；不支持该协议的接口目前不能直接使用。
