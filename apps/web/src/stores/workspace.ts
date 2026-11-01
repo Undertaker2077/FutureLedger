@@ -1,21 +1,138 @@
-import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
+import { computed, ref } from 'vue'
 
-export const useWorkspace = defineStore('workspace',()=>{
- const mode=ref<'mock'|'api'>(import.meta.env.VITE_DEMO_MODE==='false'?'api':'mock')
- const apiToken=ref('')
- const sessionId=ref(''); const messages=ref<{role:'user'|'assistant',text:string}[]>([])
- const minBalance=ref(300000),salaryDelay=ref(0),dailyBudget=ref(8000),protectedIds=ref(['cloud-drive'])
- const tasks=ref([{id:'op-demo-1042',title:'视频订阅取消请求',status:'待确认',detail:'请检查操作范围；演示不会连接银行。'},{id:'plan-demo-022',title:'新电脑储蓄计划',status:'模拟完成',detail:'已生成本地方案，没有创建转账。'}])
- const mandates=ref([{id:'cloud-drive',merchant:'云盘会员',amount:25,status:'ACTIVE',protected:true},{id:'video',merchant:'视频会员',amount:25,status:'ACTIVE',protected:false},{id:'music',merchant:'音乐会员',amount:15,status:'ACTIVE',protected:false},{id:'fitness',merchant:'健身服务',amount:99,status:'ACTIVE',protected:false}])
- const transactions=ref([{date:'2026-10-01',merchant:'星巴克咖啡',category:'餐饮',amount:-3600},{date:'2026-10-01',merchant:'工资收入',category:'工资',amount:1860000},{date:'2026-09-30',merchant:'网易云音乐',category:'订阅',amount:-1500},{date:'2026-09-29',merchant:'地铁出行',category:'交通',amount:-800},{date:'2026-09-28',merchant:'超市购物',category:'购物',amount:-12680},{date:'2026-09-27',merchant:'退款入账',category:'退款',amount:3200}])
- const activeMandates=computed(()=>mandates.value.filter(m=>m.status==='ACTIVE'))
- function toggleProtected(id:string){const m=mandates.value.find(x=>x.id===id);if(!m)return;m.protected=!m.protected;protectedIds.value=m.protected?[...new Set([...protectedIds.value,id])]:protectedIds.value.filter(x=>x!==id)}
- function requestCancel(id:string){const m=mandates.value.find(x=>x.id===id);if(!m)return;if(m.protected){tasks.value.unshift({id:`scope-${Date.now()}`,title:`修改保护设置：${m.merchant}`,status:'待确认',detail:'受保护授权不会直接取消；请先单独确认保护设置。'});return}tasks.value.unshift({id:`cancel-${Date.now()}`,title:`取消${m.merchant}`,status:'待确认',detail:'本地演示请求；真正取消需要后端执行门和银行适配器。'})}
- function approveDemoTask(id:string){const t=tasks.value.find(x=>x.id===id);if(t){t.status='已确认（演示）';t.detail='仅更新了本地演示状态，没有调用银行。'}}
- function simulate(){let balance=4285632,min=balance,minDay=1;const days:{day:number,balance:number}[]=[];for(let d=1;d<=30;d++){if(d===15+salaryDelay.value)balance+=1860000;balance-=dailyBudget.value;if(d===20)balance-=680000;if(balance<min){min=balance;minDay=d}days.push({day:d,balance})}return {days,min,minDay,feasible:min>=minBalance.value}}
- function apiHeaders(){return {'Content-Type':'application/json',...(apiToken.value.trim()?{Authorization:`Bearer ${apiToken.value.trim()}`}:{})}}
- async function requestJson(path:string,init:RequestInit={}){const response=await fetch(path,{...init,headers:{...apiHeaders(),...(init.headers??{})}});const body=await response.json().catch(()=>null);if(!response.ok){const detail=body?.error?.message||body?.detail||`HTTP ${response.status}`;const next=body?.error?.next_action;throw new Error(next?`${detail}（${next}）`:detail)}if(body?.error)throw new Error(body.error.message||'服务返回错误');return body?.data??body}
- async function send(text:string){messages.value.push({role:'user',text});if(mode.value==='api'){try{if(!apiToken.value.trim())throw new Error('请先在“偏好设置”填写当前开发环境的 Bearer token');if(!sessionId.value){const session=await requestJson('/api/sessions',{method:'POST',body:JSON.stringify({dataset_id:'personal_ledger'})});sessionId.value=session.session_id}const d=await requestJson('/api/agent/chat',{method:'POST',body:JSON.stringify({session_id:sessionId.value,text})});const clarification=d.clarification;const reply=clarification?.questions?.join(' ')||d.summary||`计划状态：${d.execution_status||d.status}。`;messages.value.push({role:'assistant',text:reply});return}catch(e){messages.value.push({role:'assistant',text:`API 请求未完成：${e instanceof Error?e.message:'未知错误'}`});return}}const a=/工资.*晚|晚.*工资/.test(text)?'已将演示工资日延后 5 天。可在“未来账本”调整假设并重算。':/转|付|汇/.test(text)?'请补充金额、收款人和来源账户。演示不会提交资金操作。':`收到。我会基于合成演示账本分析“${text}”。当前不会执行银行操作。`;messages.value.push({role:'assistant',text:a})}
- return {mode,apiToken,sessionId,messages,send,minBalance,salaryDelay,dailyBudget,protectedIds,tasks,mandates,transactions,activeMandates,toggleProtected,requestCancel,approveDemoTask,simulate}
+export type ChatResult = {
+  status: string
+  route?: string
+  answer?: string
+  message?: string
+  chart?: string
+  value_format?: 'money' | 'count'
+  rows?: Record<string, unknown>[]
+  query_id?: string
+  action_id?: string
+  categories?: string[]
+}
+export type ChatMessage = ChatResult & { role: 'user' | 'assistant'; text: string }
+export type AccountSnapshot = { account_id: string; account_name: string; balance_cents: number }
+type ApiError = Error & { status?: number; code?: string }
+
+function errorFromResponse(status: number, body: unknown): ApiError {
+  const detail = typeof body === 'object' && body !== null && 'detail' in body ? (body as { detail?: unknown }).detail : body
+  const payload = typeof detail === 'object' && detail !== null ? detail as Record<string, unknown> : {}
+  const error = new Error(String(payload.message || detail || `请求失败（${status}）`)) as ApiError
+  error.status = status
+  error.code = typeof payload.code === 'string' ? payload.code : undefined
+  return error
+}
+
+export const useWorkspace = defineStore('workspace', () => {
+  let generation = 0
+  const username = ref('')
+  const authToken = ref('')
+  const sessionId = ref('')
+  const messages = ref<ChatMessage[]>([])
+  const loading = ref(false)
+  const error = ref('')
+  const authLoading = ref(false)
+  const pendingAction = ref<ChatResult | null>(null)
+  const accounts = ref<AccountSnapshot[]>([])
+  const accountError = ref('')
+  const totalBalanceCents = computed(() => accounts.value.reduce((total, account) => total + account.balance_cents, 0))
+  const authenticated = computed(() => Boolean(authToken.value && username.value && sessionId.value))
+
+  function clearLocalSession() {
+    generation += 1
+    username.value = ''; authToken.value = ''; sessionId.value = ''; messages.value = []; pendingAction.value = null
+    accounts.value = []; accountError.value = ''; loading.value = false; authLoading.value = false; error.value = ''
+  }
+
+  async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const requestedGeneration = generation
+    const headers = new Headers(init.headers)
+    if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json')
+    const response = await fetch(path, { ...init, headers })
+    const body = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      const failure = errorFromResponse(response.status, body)
+      if (requestedGeneration === generation && (failure.code === 'UNAUTHENTICATED' || failure.code === 'FORBIDDEN')) clearLocalSession()
+      throw failure
+    }
+    return body as T
+  }
+
+  async function register(user: string, password: string) {
+    await api('/api/auth/register', { method: 'POST', body: JSON.stringify({ username: user, password }) })
+  }
+  async function createSession() {
+    const requestedGeneration = generation
+    const response = await api<{ session_id: string }>('/api/sessions', { method: 'POST', body: JSON.stringify({ auth_token: authToken.value, dataset_id: 'personal_ledger' }) })
+    if (requestedGeneration === generation) sessionId.value = response.session_id
+  }
+  async function login(user: string, password: string) {
+    clearLocalSession()
+    const requestedGeneration = generation
+    authLoading.value = true; error.value = ''
+    try {
+      const response = await api<{ auth_token: string; username: string }>('/api/auth/login', { method: 'POST', body: JSON.stringify({ username: user, password }) })
+      if (requestedGeneration !== generation) return
+      username.value = response.username; authToken.value = response.auth_token
+      await createSession()
+      if (requestedGeneration !== generation) return
+      await refreshAccounts().catch(() => undefined)
+    } finally { if (requestedGeneration === generation) authLoading.value = false }
+  }
+  async function logout() {
+    const token = authToken.value
+    clearLocalSession()
+    if (token) await api('/api/auth/logout', { method: 'POST', body: JSON.stringify({ auth_token: token }) }).catch(() => undefined)
+  }
+  async function refreshAccounts() {
+    const requestedGeneration = generation
+    accountError.value = ''; accounts.value = []
+    try {
+      const result = await api<{ accounts: AccountSnapshot[] }>(`/api/accounts?session_id=${encodeURIComponent(sessionId.value)}`)
+      if (requestedGeneration === generation) accounts.value = result.accounts
+    } catch (caught) {
+      if (requestedGeneration === generation) accountError.value = caught instanceof Error ? caught.message : '账户余额刷新失败'
+      throw caught
+    }
+  }
+  async function send(text: string) {
+    if (!authenticated.value) throw new Error('请先登录')
+    if (loading.value) throw new Error('请等待当前查询完成')
+    const requestedGeneration = generation
+    loading.value = true; error.value = ''
+    messages.value.push({ role: 'user', text, status: 'sent' })
+    try {
+      const response = await api<ChatResult>('/api/ask', { method: 'POST', body: JSON.stringify({ session_id: sessionId.value, question: text }) })
+      if (requestedGeneration !== generation) return response
+      messages.value.push({ ...response, role: 'assistant', text: response.answer || response.message || '请求已处理。' })
+      pendingAction.value = response.status === 'confirmation_required' ? response : null
+      return response
+    } catch (caught) {
+      const failure = caught as ApiError
+      if (requestedGeneration === generation) {
+        error.value = failure.message
+        messages.value.push({ role: 'assistant', status: 'error', text: `请求失败：${failure.message}` })
+      }
+      throw failure
+    } finally { if (requestedGeneration === generation) loading.value = false }
+  }
+  async function authorizeAction(actionId: string, password: string) {
+    return api<{ authorization_id: string; categories: string[] }>(`/api/actions/${actionId}/authorize`, { method: 'POST', body: JSON.stringify({ session_id: sessionId.value, password }) })
+  }
+  async function confirmAction(actionId: string, authorizationId: string, category: string) {
+    const requestedGeneration = generation
+    const response = await api<ChatResult>(`/api/actions/${actionId}/confirm`, { method: 'POST', body: JSON.stringify({ session_id: sessionId.value, authorization_id: authorizationId, category }) })
+    if (requestedGeneration !== generation) return response
+    for (const message of messages.value) if (message.action_id === actionId) message.status = response.status
+    messages.value.push({ ...response, role: 'assistant', text: response.message || '转账处理完成。' }); pendingAction.value = null
+    await refreshAccounts().catch(() => undefined)
+    return response
+  }
+  async function simulate(planId: string, body: Record<string, number>) {
+    return api<{ result: Record<string, unknown>; status: string }>(`/api/plans/${planId}/simulate`, { method: 'POST', body: JSON.stringify({ session_id: sessionId.value, plan_version: 1, ...body }) })
+  }
+  return { username, sessionId, messages, loading, error, authLoading, pendingAction, authenticated, accounts, accountError, totalBalanceCents, refreshAccounts, register, login, logout, send, authorizeAction, confirmAction, simulate }
 })

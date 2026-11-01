@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, func, select, text
+from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.orm import Session
 
@@ -159,10 +160,8 @@ def test_runtime_login_cannot_modify_app_schema(
     bank_settings: Settings, fixture_root: Path
 ) -> None:
     reset_database(bank_settings, fixture_root)
-    runtime_url = (
-        "postgresql+psycopg://futureledger_runtime:futureledger-runtime@"
-        "localhost:55432/futureledger_bank"
-    )
+    runtime_url = make_url(bank_settings.database_url).set(
+        username='futureledger_runtime', password='futureledger-runtime')
     engine = create_engine(runtime_url)
     with Session(engine) as session:
         assert session.scalar(text("SELECT count(*) FROM bank.accounts")) == 3

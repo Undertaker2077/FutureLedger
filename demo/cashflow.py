@@ -66,7 +66,7 @@ def simulate_cashflow(
         {"day": 8, "signed_cents": -3000, "source": "cloud_storage", "protected": True},
         {"day": 10, "signed_cents": -6800, "source": "video_subscription", "protected": True},
         {"day": salary_day, "signed_cents": 800000, "source": "salary", "assumption": True},
-        {"day": purchase_day, "signed_cents": -600000, "source": "computer_goal", "assumption": True},
+        {"day": purchase_day, "signed_cents": -goal_cents, "source": "computer_goal", "assumption": True},
     ]
 
     points: list[int] = []

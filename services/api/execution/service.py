@@ -16,8 +16,10 @@ import secrets
 import sqlite3
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from functools import wraps
 from typing import Any, Callable, Protocol
+from zoneinfo import ZoneInfo
 
 
 THRESHOLD_CENTS = 100_000
@@ -100,6 +102,19 @@ def _hash_params(params: dict[str, Any]) -> str:
     return hashlib.sha256(body.encode()).hexdigest()
 
 
+def serialized(method):
+    """One connection cannot host concurrent transactions from API threads."""
+    @wraps(method)
+    def call(self, *args, **kwargs):
+        with self.lock:
+            try:
+                return method(self, *args, **kwargs)
+            except BaseException:
+                self.db.rollback()
+                raise
+    return call
+
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS operations(
  id TEXT PRIMARY KEY, user_id TEXT NOT NULL, account_id TEXT NOT NULL,
@@ -157,9 +172,11 @@ class ExecutionService:
         self.db.execute("PRAGMA foreign_keys=ON")
         self.db.executescript(SCHEMA)
         self.bank = bank
-        self.password_checker = password_checker or (lambda password, user_id: bool(password))
+        self.password_checker = password_checker or (lambda password, user_id: False)
         self.clock = clock
         self.lock = threading.RLock()
+        if hasattr(bank, 'attach_store'):
+            bank.attach_store(self.db)
 
     @staticmethod
     def connect(path: str = ":memory:") -> sqlite3.Connection:
@@ -171,6 +188,23 @@ class ExecutionService:
         self.db.execute("INSERT INTO audit_events(user_id,operation_id,event_type,redacted_payload,created_at) VALUES(?,?,?,?,?)",
                         (user_id, operation_id, event_type, json.dumps(safe, sort_keys=True), _iso(self.clock())))
 
+    def _business_date(self) -> str:
+        return self.clock().astimezone(ZoneInfo('Asia/Shanghai')).date().isoformat()
+
+    def _check_execution_date(self, execution_date: str | None):
+        if execution_date is None:
+            return
+        try:
+            requested = date.fromisoformat(execution_date)
+        except (ValueError, TypeError) as exc:
+            raise ExecutionError('INVALID_DATE', '执行日期必须是 YYYY-MM-DD。') from exc
+        today = date.fromisoformat(self._business_date())
+        if requested > today:
+            raise ExecutionError('UNSUPPORTED_SCHEDULE', '预约转账尚未实现，请在执行当天重新确认。')
+        if requested < today:
+            raise ExecutionError('INVALID_DATE', '执行日期已过期，请重新创建操作。')
+
+    @serialized
     def create_operation(self, *, user_id: str, account_id: str, recipient_user_id: str,
                          amount_cents: int, plan_id: str = "transfer", plan_version: int = 1,
                          execution_date: str | None = None,
@@ -181,8 +215,9 @@ class ExecutionService:
         existing = self.db.execute("SELECT * FROM operations WHERE user_id=? AND idempotency_key=?", (user_id, idem)).fetchone()
         if existing:
             return self._view(existing)
+        self._check_execution_date(execution_date)
         now = self.clock()
-        business_date = now.date().isoformat()
+        business_date = self._business_date()
         reserved = self.db.execute("SELECT COALESCE(SUM(amount_cents),0) FROM quota_reservations WHERE user_id=? AND business_date=? AND state IN ('RESERVED','COMMITTED')", (user_id, business_date)).fetchone()[0]
         risk = "RED" if reserved + amount_cents > THRESHOLD_CENTS else "YELLOW"
         params = {"account_id": account_id, "recipient_user_id": recipient_user_id, "amount_cents": amount_cents}
@@ -198,6 +233,7 @@ class ExecutionService:
         self.db.commit()
         return self._view(self.db.execute("SELECT * FROM operations WHERE id=?", (op_id,)).fetchone())
 
+    @serialized
     def confirm(self, operation_id: str, *, user_id: str, plan_version: int, params_hash: str) -> dict[str, Any]:
         row = self._owned(operation_id, user_id)
         if row["status"] not in {"NEEDS_CONFIRM", "NEEDS_AUTH"}:
@@ -206,6 +242,7 @@ class ExecutionService:
             raise ExecutionError("PLAN_STALE", "操作参数或计划版本已变化，请重新规划。", status=row["status"])
         if _parse(row["confirm_expires_at"]) <= self.clock():
             self._set_status(operation_id, "EXPIRED")
+            self.db.commit()
             raise ExecutionError("AUTH_EXPIRED", "确认已过期，请重新创建操作。", status="EXPIRED")
         now = self.clock()
         auth_id = "auth_" + secrets.token_urlsafe(12)
@@ -216,6 +253,7 @@ class ExecutionService:
         self.db.commit()
         return self.status(operation_id, user_id=user_id)
 
+    @serialized
     def verify(self, operation_id: str, *, user_id: str, password: str) -> dict[str, Any]:
         row = self._owned(operation_id, user_id)
         if row["status"] != "NEEDS_AUTH":
@@ -224,7 +262,7 @@ class ExecutionService:
             self._audit(user_id, operation_id, "AUTH_FAILED", {})
             self.db.commit()
             raise ExecutionError("AUTH_REQUIRED", "强验证失败。", status=row["status"])
-        auth = self.db.execute("SELECT * FROM authorizations WHERE operation_id=? ORDER BY confirmed_at DESC LIMIT 1", (operation_id,)).fetchone()
+        auth = self.db.execute("SELECT * FROM authorizations WHERE operation_id=? ORDER BY rowid DESC LIMIT 1", (operation_id,)).fetchone()
         if auth is None or _parse(auth["expires_at"]) <= self.clock():
             raise ExecutionError("AUTH_EXPIRED", "强验证已过期，请重新确认。", status="EXPIRED")
         ref = "authref_" + secrets.token_urlsafe(12)
@@ -234,6 +272,7 @@ class ExecutionService:
         self.db.commit()
         return self.status(operation_id, user_id=user_id)
 
+    @serialized
     def execute(self, operation_id: str, *, user_id: str, idempotency_key: str) -> dict[str, Any]:
         with self.lock:
             self.db.execute("BEGIN IMMEDIATE")
@@ -241,14 +280,23 @@ class ExecutionService:
             if row["idempotency_key"] != idempotency_key:
                 self.db.rollback()
                 raise ExecutionError("PLAN_STALE", "幂等键与操作不匹配。", status=row["status"])
-            if row["status"] in {"SUCCEEDED", "FAILED", "PENDING_UNKNOWN", "ENQUEUED"}:
+            if row["status"] in {"SUCCEEDED", "FAILED", "PENDING_UNKNOWN", "ENQUEUED", "SUBMITTING"}:
                 self.db.commit()
                 return self._view(row)
             if row["status"] != "READY":
                 self.db.rollback()
                 raise ExecutionError("AUTH_REQUIRED", "操作尚未完成确认或强验证。", status=row["status"])
             now = self.clock()
-            business_date = now.date().isoformat()
+            auth = self.db.execute("SELECT * FROM authorizations WHERE operation_id=? ORDER BY rowid DESC LIMIT 1", (operation_id,)).fetchone()
+            if (auth is None or _parse(auth['expires_at']) <= now or auth['used_at'] is not None
+                    or auth['params_hash'] != row['params_hash'] or auth['plan_version'] != row['plan_version']):
+                self._set_status(operation_id, 'EXPIRED')
+                self.db.commit()
+                raise ExecutionError('AUTH_EXPIRED', '确认或授权已过期，请重新创建操作。', status='EXPIRED')
+            if row['risk_level'] == 'RED' and not auth['auth_ref']:
+                raise ExecutionError('AUTH_REQUIRED', '需要独立强验证。', status='NEEDS_AUTH')
+            self._check_execution_date(json.loads(row['params_json']).get('execution_date'))
+            business_date = self._business_date()
             total = self.db.execute("SELECT COALESCE(SUM(amount_cents),0) FROM quota_reservations WHERE user_id=? AND business_date=? AND state IN ('RESERVED','COMMITTED')", (user_id, business_date)).fetchone()[0]
             if total + row["amount_cents"] > THRESHOLD_CENTS and row["risk_level"] != "RED":
                 self.db.execute("UPDATE operations SET risk_level='RED' WHERE id=?", (operation_id,))
@@ -258,23 +306,27 @@ class ExecutionService:
                 raise ExecutionError("AUTH_REQUIRED", "并发累计额度超过日限额，需要强验证。", status="NEEDS_AUTH")
             self.db.execute("INSERT INTO quota_reservations VALUES(?,?,?,?,?)", (operation_id, user_id, business_date, row["amount_cents"], "RESERVED"))
             self.db.execute("INSERT INTO outbox(operation_id,event_type,payload_json) VALUES(?,?,?)", (operation_id, "TRANSFER_SUBMIT", json.dumps({"operation_id": operation_id, "idempotency_key": idempotency_key})))
+            self.db.execute('UPDATE authorizations SET used_at=? WHERE id=?', (_iso(now), auth['id']))
             self._set_status(operation_id, "ENQUEUED")
             self._audit(user_id, operation_id, "EXECUTION_ENQUEUED", {"amount_cents": row["amount_cents"]})
             self.db.commit()
             return self.status(operation_id, user_id=user_id)
 
+    @serialized
     def claim_outbox(self, worker_id: str, *, lease_seconds: int = 30) -> sqlite3.Row | None:
         with self.lock:
             self.db.execute("BEGIN IMMEDIATE")
             now = self.clock()
-            row = self.db.execute("SELECT * FROM outbox WHERE dispatched_at IS NULL AND (lease_until IS NULL OR lease_until<?) ORDER BY id LIMIT 1", (_iso(now),)).fetchone()
+            row = self.db.execute("SELECT o.* FROM outbox o JOIN operations p ON p.id=o.operation_id WHERE o.dispatched_at IS NULL AND p.status IN ('ENQUEUED','SUBMITTING') AND (o.lease_until IS NULL OR o.lease_until<?) ORDER BY o.id LIMIT 1", (_iso(now),)).fetchone()
             if not row:
                 self.db.commit()
                 return None
             self.db.execute("UPDATE outbox SET lease_owner=?,lease_until=?,attempts=attempts+1 WHERE id=?", (worker_id, _iso(now + timedelta(seconds=lease_seconds)), row["id"]))
+            self._set_status(row['operation_id'], 'SUBMITTING')
             self.db.commit()
             return self.db.execute("SELECT * FROM outbox WHERE id=?", (row["id"],)).fetchone()
 
+    @serialized
     def process_one(self, worker_id: str = "worker") -> dict[str, Any] | None:
         item = self.claim_outbox(worker_id)
         if item is None:
@@ -283,17 +335,17 @@ class ExecutionService:
         row = self.db.execute("SELECT * FROM operations WHERE id=?", (item["operation_id"],)).fetchone()
         try:
             ref = self.bank.submit_transfer(operation_id=row["id"], user_id=row["user_id"], account_id=row["account_id"], recipient_user_id=row["recipient_user_id"], amount_cents=row["amount_cents"], idempotency_key=payload["idempotency_key"])
-        except UnknownBankResult:
+        except (UnknownBankResult, ExecutionError) as exc:
+            if isinstance(exc, ExecutionError) and exc.status == 'FAILED':
+                self._set_status(row['id'], 'FAILED')
+                self.db.execute("UPDATE quota_reservations SET state='RELEASED' WHERE operation_id=?", (row['id'],))
+                self.db.execute('UPDATE outbox SET dispatched_at=? WHERE id=?', (_iso(self.clock()), item['id']))
+                self._audit(row['user_id'], row['id'], 'BANK_FAILED', {'code': exc.code})
+                self.db.commit()
+                return self.status(row['id'], user_id=row['user_id'])
             self._set_status(row["id"], "PENDING_UNKNOWN")
             self.db.execute("UPDATE outbox SET lease_owner=NULL,lease_until=NULL WHERE id=?", (item["id"],))
             self._audit(row["user_id"], row["id"], "BANK_RESULT_UNKNOWN", {})
-            self.db.commit()
-            return self.status(row["id"], user_id=row["user_id"])
-        except ExecutionError as exc:
-            self._set_status(row["id"], "FAILED")
-            self.db.execute("UPDATE quota_reservations SET state='RELEASED' WHERE operation_id=?", (row["id"],))
-            self.db.execute("UPDATE outbox SET dispatched_at=? WHERE id=?", (_iso(self.clock()), item["id"]))
-            self._audit(row["user_id"], row["id"], "BANK_FAILED", {"code": exc.code})
             self.db.commit()
             return self.status(row["id"], user_id=row["user_id"])
         self._set_status(row["id"], "SUCCEEDED", bank_ref=ref)
@@ -303,29 +355,38 @@ class ExecutionService:
         self.db.commit()
         return self.status(row["id"], user_id=row["user_id"])
 
+    @serialized
     def recover_unknown(self, operation_id: str, *, user_id: str) -> dict[str, Any]:
         row = self._owned(operation_id, user_id)
-        if row["status"] != "PENDING_UNKNOWN":
+        if row["status"] not in {'PENDING_UNKNOWN', 'SUBMITTING'}:
             return self._view(row)
         result = self.bank.get_transfer_status(operation_id=operation_id, idempotency_key=row["idempotency_key"])
         if result == "SUCCEEDED":
-            self._set_status(operation_id, "SUCCEEDED", bank_ref=self.bank.transfers[row["idempotency_key"]]["bank_ref"] if hasattr(self.bank, "transfers") else None)
+            reference = (self.bank.get_bank_reference(operation_id=operation_id, idempotency_key=row['idempotency_key'])
+                         if hasattr(self.bank, 'get_bank_reference') else
+                         self.bank.transfers[row['idempotency_key']]['bank_ref'] if hasattr(self.bank, 'transfers') else None)
+            self._set_status(operation_id, "SUCCEEDED", bank_ref=reference)
             self.db.execute("UPDATE quota_reservations SET state='COMMITTED' WHERE operation_id=?", (operation_id,))
             self._audit(user_id, operation_id, "BANK_CONFIRMED", {})
+            self.db.execute('UPDATE outbox SET dispatched_at=? WHERE operation_id=?', (_iso(self.clock()), operation_id))
             self.db.commit()
         elif result == "FAILED":
             self._set_status(operation_id, "FAILED")
             self.db.execute("UPDATE quota_reservations SET state='RELEASED' WHERE operation_id=?", (operation_id,))
+            self.db.execute('UPDATE outbox SET dispatched_at=? WHERE operation_id=?', (_iso(self.clock()), operation_id))
             self.db.commit()
         return self.status(operation_id, user_id=user_id)
 
+    @serialized
     def status(self, operation_id: str, *, user_id: str) -> dict[str, Any]:
         return self._view(self._owned(operation_id, user_id))
 
+    @serialized
     def lookup_by_key(self, *, user_id: str, idempotency_key: str) -> dict[str, Any] | None:
         row = self.db.execute("SELECT * FROM operations WHERE user_id=? AND idempotency_key=?", (user_id, idempotency_key)).fetchone()
         return self._view(row) if row else None
 
+    @serialized
     def invalidate(self, operation_id: str, *, user_id: str) -> dict[str, Any]:
         row = self._owned(operation_id, user_id)
         if row["status"] in {"SUCCEEDED", "SUBMITTING", "PENDING_UNKNOWN", "ENQUEUED"}:
@@ -335,10 +396,15 @@ class ExecutionService:
         self.db.commit()
         return self.status(operation_id, user_id=user_id)
 
+    @serialized
     def cancel_unsubmitted(self, operation_id: str, *, user_id: str) -> str:
+        self.db.execute('BEGIN IMMEDIATE')
         row = self._owned(operation_id, user_id)
         if row["status"] in {"SUBMITTING", "PENDING_UNKNOWN", "SUCCEEDED"}:
+            self.db.commit()
             return "PENDING_UNKNOWN" if row["status"] != "SUCCEEDED" else "ALREADY_SUBMITTED"
+        self.db.execute('UPDATE outbox SET dispatched_at=? WHERE operation_id=?', (_iso(self.clock()), operation_id))
+        self.db.execute("UPDATE quota_reservations SET state='RELEASED' WHERE operation_id=?", (operation_id,))
         self._set_status(operation_id, "EXPIRED")
         self._audit(user_id, operation_id, "OPERATION_CANCELLED", {})
         self.db.commit()

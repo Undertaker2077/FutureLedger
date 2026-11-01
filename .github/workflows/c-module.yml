@@ -18,6 +18,10 @@ jobs:
           node-version: '24'
       - run: python -m pip install -r requirements-c4.txt
       - run: python scripts/run_c4_quality.py --output /tmp/futureledger-c4-evidence
+      - run: npm ci --prefix apps/web
+      - run: npm test --prefix apps/web
+      - run: npm run check --prefix apps/web
+      - run: npm run build --prefix apps/web
       - uses: actions/upload-artifact@v4
         if: always()
         with:

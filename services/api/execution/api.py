@@ -61,6 +61,6 @@ def create_execution_app(service: ExecutionService, *, user_id: str) -> FastAPI:
 
     @app.get("/api/operations/{operation_id}")
     def status(operation_id: str):
-        return call(lambda: service.status(operation_id, user_id=user_id))
+        return call(lambda: service.recover_unknown(operation_id, user_id=user_id))
 
     return app

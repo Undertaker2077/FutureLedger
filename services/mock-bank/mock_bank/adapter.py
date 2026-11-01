@@ -28,6 +28,7 @@ class BankAdapter(Protocol):
         self, subject: str, quote_id: str, params_hash: str, idempotency_key: str
     ) -> TransferResult: ...
     def get_transfer_status(self, subject: str, transfer_id: str) -> TransferResult: ...
+    def get_transfer_by_key(self, subject: str, idempotency_key: str) -> TransferResult: ...
     def list_mandates(
         self, subject: str, account_id: str | None = None
     ) -> list[dict[str, object]]: ...
@@ -64,6 +65,9 @@ class ServiceBankAdapter:
 
     def get_transfer_status(self, subject: str, transfer_id: str) -> TransferResult:
         return self.service.get_transfer_status(subject, transfer_id)
+
+    def get_transfer_by_key(self, subject: str, idempotency_key: str) -> TransferResult:
+        return self.service.get_transfer_by_key(subject, idempotency_key)
 
     def list_mandates(
         self, subject: str, account_id: str | None = None
@@ -165,6 +169,10 @@ class HttpBankAdapter:
             self._request("GET", f"/bank/v1/transfers/{transfer_id}", subject),
             strict=False,
         )
+
+    def get_transfer_by_key(self, subject: str, idempotency_key: str) -> TransferResult:
+        return TransferResult.model_validate(self._request('GET',
+            '/bank/v1/transfers/by-key', subject, idempotency_key=idempotency_key), strict=False)
 
     def list_mandates(
         self, subject: str, account_id: str | None = None

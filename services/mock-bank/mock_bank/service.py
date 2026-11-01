@@ -185,6 +185,13 @@ class BankService:
     def get_transfer_status(self, subject: str, transfer_id: str) -> TransferResult:
         return self._transfer(self.repository.get_transfer(subject, transfer_id))
 
+    def get_transfer_by_key(self, subject: str, idempotency_key: str) -> TransferResult:
+        try:
+            validate_idempotency_key(idempotency_key)
+        except (TypeError, ValueError) as exc:
+            raise BankError('INVALID_IDEMPOTENCY_KEY', 'invalid lookup key', http_status=400) from exc
+        return self._transfer(self.repository.get_transfer_by_key(subject, idempotency_key))
+
     @staticmethod
     def _mandate_result(mandate: Mandate) -> MandateResult:
         return MandateResult(

@@ -48,7 +48,7 @@ class ExecutionGateAdapter:
                                  plan_version=proposal.plan_version, node_id=proposal.node_id)
 
     async def get_operation_status(self, principal, binding):
-        raw = self.service.status(binding.operation_id, user_id=principal.subject)
+        raw = self.service.recover_unknown(binding.operation_id, user_id=principal.subject)
         status = {"ENQUEUED": "SUBMITTING"}.get(raw["status"], raw["status"])
         if status == "EXPIRED":
             status = "FAILED"
@@ -136,7 +136,7 @@ class ExecutionGateAdapter:
                               status=status, bank_ref=raw.get("bank_ref"), next_action="查询 B 权威状态。")
 
     async def get(self, principal, operation_id):
-        raw = self.service.status(operation_id, user_id=principal.subject)
+        raw = self.service.recover_unknown(operation_id, user_id=principal.subject)
         status = {"ENQUEUED": "SUBMITTING", "EXPIRED": "FAILED"}.get(raw["status"], raw["status"])
         return OperationState(operation_id=operation_id, plan_id=raw["plan_id"], plan_version=raw["plan_version"],
                               status=status, bank_ref=raw.get("bank_ref"), next_action="查询 B 权威状态。")
