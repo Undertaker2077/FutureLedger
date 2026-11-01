@@ -28,8 +28,9 @@ class RoleABankPort(Protocol):
 class RoleABankAdapter:
     """Adapt A's quote/submit/status API to B's worker-facing bank port."""
 
-    def __init__(self, bank: RoleABankPort) -> None:
+    def __init__(self, bank: RoleABankPort, request_factory=None) -> None:
         self.bank = bank
+        self.request_factory = request_factory
         self._transfer_ids: dict[str, tuple[str, str]] = {}
 
     @staticmethod
@@ -58,24 +59,25 @@ class RoleABankAdapter:
         try:
             from mock_bank.contracts import TransferRequest
         except ModuleNotFoundError:
-            # The import works when the repository root is on PYTHONPATH.  The
-            # fallback keeps the adapter usable with a compatible test port.
             TransferRequest = None  # type: ignore[assignment]
         try:
+            payload = {
+                "account_id": account_id,
+                "recipient_id": recipient_user_id,
+                "amount_cents": amount_cents,
+                "currency": "CNY",
+            }
             request = (
-                TransferRequest(
+                self.request_factory(**payload)
+                if self.request_factory is not None
+                else TransferRequest(
                     account_id=account_id,
                     recipient_id=recipient_user_id,
                     amount_cents=amount_cents,
                     currency="CNY",
                 )
                 if TransferRequest is not None
-                else {
-                    "account_id": account_id,
-                    "recipient_id": recipient_user_id,
-                    "amount_cents": amount_cents,
-                    "currency": "CNY",
-                }
+                else payload
             )
             quote = self.bank.quote_transfer(user_id, request, datetime.now(timezone.utc))
             result = self.bank.submit_transfer(

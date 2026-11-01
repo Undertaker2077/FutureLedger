@@ -8,6 +8,7 @@ from .service import (
     UnknownBankResult,
 )
 from .c_adapter import ExecutionGateAdapter
+from .a_adapter import RoleABankAdapter
 
 __all__ = [
     "BankAdapter",
@@ -16,4 +17,5 @@ __all__ = [
     "InMemoryBank",
     "UnknownBankResult",
     "ExecutionGateAdapter",
+    "RoleABankAdapter",
 ]
