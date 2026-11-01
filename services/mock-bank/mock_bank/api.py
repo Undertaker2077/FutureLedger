@@ -241,6 +241,11 @@ def create_app(
             ),
         )
 
+    @app.get('/bank/v1/transfers/by-key')
+    def get_transfer_by_key(request: Request, subject: Subject,
+            idempotency_key: Annotated[str, Header(alias='Idempotency-Key')]) -> dict[str, Any]:
+        return envelope(request, service.get_transfer_by_key(subject, idempotency_key).model_dump(mode='json'))
+
     @app.get("/bank/v1/transfers/{transfer_id}")
     def get_transfer(
         transfer_id: str, request: Request, subject: Subject

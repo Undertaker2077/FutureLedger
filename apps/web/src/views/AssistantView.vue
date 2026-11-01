@@ -1,23 +1,12 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { useWorkspace, type ChatMessage } from '../stores/workspace'
+import { useWorkspace } from '../stores/workspace'
 import ResultCard from '../components/ResultCard.vue'
+import TransferCard from '../components/TransferCard.vue'
 
-const workspace = useWorkspace(); const draft = ref(''); const password = ref(''); const category = ref('购物'); const authorizationId = ref(''); const actionError = ref('')
+const workspace = useWorkspace(); const draft = ref('')
 const suggestions = ['这个月的支出是多少？', '8月和9月的各项净支出', '上个月的收入明细', '我想存6000元买电脑，至少留3000元']
 async function send(value = draft.value) { const text = value.trim(); if (!text) return; draft.value = ''; await workspace.send(text).catch(() => undefined) }
-async function authorize(message: ChatMessage) {
-  if (!message.action_id || !password.value) return
-  actionError.value = ''
-  try { const response = await workspace.authorizeAction(message.action_id, password.value); authorizationId.value = response.authorization_id; if (response.categories?.length && !response.categories.includes(category.value)) category.value = response.categories[0]; password.value = '' }
-  catch (error) { actionError.value = error instanceof Error ? error.message : '密码验证失败。' }
-}
-async function confirm(message: ChatMessage) {
-  if (!message.action_id || !authorizationId.value) return
-  actionError.value = ''
-  try { await workspace.confirmAction(message.action_id, authorizationId.value, category.value); authorizationId.value = '' }
-  catch (error) { actionError.value = error instanceof Error ? error.message : '确认失败。' }
-}
 </script>
 <template>
   <div class="assistant-layout">
@@ -31,14 +20,7 @@ async function confirm(message: ChatMessage) {
             <p>{{ message.text }}</p>
             <ResultCard v-if="message.role === 'assistant' && (message.rows?.length || message.chart === 'metric_card')" :result="message" />
             <a v-if="message.role === 'assistant' && message.query_id" class="text-link" :href="`/api/queries/${message.query_id}/export.csv?session_id=${encodeURIComponent(workspace.sessionId)}`" target="_blank">导出 CSV</a>
-            <div v-if="message.status === 'confirmation_required'" class="transfer-card">
-              <b>需要确认转账</b><p>{{ message.text }}</p>
-              <label>登录密码<input v-model="password" type="password" minlength="12" autocomplete="current-password"></label>
-              <label>用途类别<select v-model="category"><option v-for="item in message.categories || ['餐饮','交通','购物','娱乐','订阅','房租','医疗','其他']" :key="item">{{ item }}</option></select></label>
-              <button v-if="!authorizationId" class="primary-button" :disabled="!password" @click="authorize(message)">验证密码</button>
-              <button v-else class="primary-button" @click="confirm(message)">确认并完成转账</button>
-              <small v-if="actionError" class="auth-error">{{ actionError }}</small>
-            </div>
+            <TransferCard v-if="message.status === 'confirmation_required' && message.action_id" :key="message.action_id" :action-id="message.action_id" />
           </div>
         </div>
         <div v-if="workspace.loading" class="loading-line">正在理解问题并查询授权范围内的数据…</div>

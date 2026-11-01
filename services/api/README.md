@@ -2,6 +2,16 @@
 
 当前分支提供 C3 受控工具编排、A/B/D 协议、结构化聚合、取消和事件关联，详见 [C3 交付与 API 示例](../../docs/c3-orchestration.md)。默认应用 OpenAPI 版本为 0.3.0，C1/C2 契约快照分别保留；完整链路入口为 `/api/agent/chat`，原 `/api/chat` 仍为 C1 提议接口。
 
+## A/B 修复后的开发接线
+
+显式配置 `FUTURELEDGER_BANK_URL`、`FUTURELEDGER_BANK_TOKEN` 后，开发工厂会接入 A 的余额、收款人和报价读取，并将转账提议交给 B。请先安装 `services/mock-bank/requirements-bank.txt`，并在仓库根目录设置 `PYTHONPATH=.:services/mock-bank`。需要保持执行状态时，将 `FUTURELEDGER_EXECUTION_DB` 设为本地持久 SQLite 文件路径；默认 `:memory:` 不保证重启恢复。
+
+B 的确认凭证在提交前重新检查有效期和参数版本；默认没有密码验证器时拒绝强验证。未来日期转账返回 `UNSUPPORTED_SCHEDULE`，不会提前扣款。未被 Worker 抢占的排队操作可以原子取消；已抢占或结果未知时只返回待查证。
+
+A 提供 `GET /bank/v1/transfers/by-key`，使用原 `Idempotency-Key` header 和内部认证/主体 header 读取最终事实。B 在调用银行前持久保存主体与键绑定；丢失响应时保留额度和 `PENDING_UNKNOWN`，状态查询按原键只读查证，不再次提交。旧版 A 若没有该读取接口，B 会保持待查证。C 的会话、DAG 和 SSE 仍然是内存状态；这项银行执行恢复不等于 C 的完整持久化恢复。
+
+正式 D 现金流和代扣 scope 确认仍未接通，不能将新增转账读取桥接视为所有工具或全部产品功能已经完成。
+
 当前分支保留已实现的 C2 显式 DAG、增量重规划和 B 查证入口，详见 [C2 使用与交付说明](../../docs/c2-dag-replanning.md)。启动命令不变，C2 的 0.2.0 契约快照和原 C1 契约快照保持不变。
 
 正式 C 模块的首个可合并版本；不是生产支付系统。原 `demo.api:create_app --factory` 保持独立可运行。完整设计、差异及 C2–C4 任务见 [交付说明](../../docs/c1-agent-api.md)。

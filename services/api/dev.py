@@ -24,11 +24,13 @@ def create_dev_app():
     bank_token = os.getenv('FUTURELEDGER_BANK_TOKEN')
     if bank_url and bank_token:
         from mock_bank.adapter import HttpBankAdapter
-        bank = RoleABankAdapter(HttpBankAdapter(bank_url, bank_token))
+        from .agent.bank_reads import RoleABankReads
+        bank_client = HttpBankAdapter(bank_url, bank_token)
+        bank = RoleABankAdapter(bank_client)
         password = os.getenv('FUTURELEDGER_DEMO_PASSWORD', '')
         checker = lambda supplied, _user: bool(password) and supplied == password
         service = ExecutionService(ExecutionService.connect(os.getenv('FUTURELEDGER_EXECUTION_DB', ':memory:')),
                                    bank, password_checker=checker)
         gate = ExecutionGateAdapter(service, worker=service)
-        kwargs.update(execution=gate, execution_gate_adapter=gate)
+        kwargs.update(execution=gate, execution_gate_adapter=gate, bank_read_adapter=RoleABankReads(bank_client))
     return create_app(**kwargs)

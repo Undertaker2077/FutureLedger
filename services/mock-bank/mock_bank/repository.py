@@ -333,6 +333,15 @@ class BankRepository:
             session.expunge(transfer)
             return transfer
 
+    def get_transfer_by_key(self, subject: str, idempotency_key: str) -> Transfer:
+        with self.session_factory() as session:
+            transfer = session.scalar(select(Transfer).where(
+                Transfer.user_id == subject, Transfer.idempotency_key == idempotency_key))
+            if transfer is None:
+                raise BankError('NOT_FOUND', 'transfer was not found', http_status=404)
+            session.expunge(transfer)
+            return transfer
+
     def cancel_mandate(
         self,
         subject: str,

@@ -80,6 +80,7 @@ The report executes all 20 A-owned transfer/mandate cases from the immutable cat
 - Send the confirmed `params_hash` and a stable 8–128 visible-ASCII `Idempotency-Key` to `submit_transfer`.
 - A key may replay only the same canonical subject/account/recipient/currency/amount/fee identity. Changed parameters return `IDEMPOTENCY_CONFLICT`.
 - On a dropped or unknown response, replay the same key or call `get_transfer_status`; never infer failure and submit a new debit.
+- When the transfer ID was lost with the response, `GET /bank/v1/transfers/by-key` with the original `Idempotency-Key` header performs a read-only, subject-scoped lookup. A missing result is not proof of a failed payment.
 - A exposes `scheduled_transfers=false`. B owns scheduling, due-time policy checks, and exactly one due-worker call.
 - `FAILED/INSUFFICIENT_FUNDS` is a stable bank fact bound to the original key.
 
