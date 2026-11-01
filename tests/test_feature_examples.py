@@ -1,7 +1,7 @@
 """Executable examples for docs/功能检验清单.md.
 
 These are intentionally phrased like the questions a classmate can type into
-the local demo.  They use the offline planner, so no model API key is needed.
+the local demo.  The test injects an explicit deterministic test provider; user startup still requires an LLM.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from demo.api import create_app
+from demo.provider import ChatProvider
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,7 +27,7 @@ class FeatureExampleTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         db = Path(self.temp.name) / "fixture.sqlite"
         shutil.copy2(FIXTURE, db)
-        self.client = TestClient(create_app(db_path=db, today=date(2026, 10, 26)))
+        self.client = TestClient(create_app(db_path=db, provider=ChatProvider(provider="local", allow_local=True), today=date(2026, 10, 26)))
         for username in ("test_user", "isolation_user"):
             self.client.post(
                 "/api/auth/register",

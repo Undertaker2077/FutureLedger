@@ -11,10 +11,22 @@ class ProviderError(RuntimeError):
 
 
 class ChatProvider:
-    def __init__(self, *, provider=None, key=None, base_url=None, model=None, transport=None):
-        self.provider = (provider or os.getenv("FUTURELEDGER_PROVIDER", "local")).lower()
+    def __init__(self, *, provider=None, key=None, base_url=None, model=None, transport=None,
+                 allow_local=False):
+        configured_provider = provider or os.getenv("FUTURELEDGER_PROVIDER")
+        if not configured_provider:
+            raise ValueError(
+                "FUTURELEDGER_PROVIDER must be exported (deepseek, openai or compatible)"
+            )
+        self.provider = configured_provider.lower()
         if self.provider not in {"local", "deepseek", "openai", "compatible"}:
             raise ValueError("FUTURELEDGER_PROVIDER must be local, deepseek, openai or compatible")
+        if self.provider == "local" and not (
+            allow_local or os.getenv("FUTURELEDGER_ALLOW_LOCAL_TESTS") == "1"
+        ):
+            raise ValueError(
+                "local mode is test-only; export FUTURELEDGER_PROVIDER and an LLM API key"
+            )
         self.key = key or os.getenv("FUTURELEDGER_API_KEY") or (
             os.getenv("DEEPSEEK_API_KEY") if self.provider == "deepseek" else os.getenv("OPENAI_API_KEY")
         )
@@ -24,6 +36,8 @@ class ChatProvider:
         self.transport = transport
         if self.provider == "compatible" and not self.base_url:
             raise ValueError("compatible provider requires FUTURELEDGER_API_BASE")
+        if self.provider != "local" and not self.key:
+            raise ValueError("FUTURELEDGER_API_KEY must be exported for the selected model service")
         if self.provider != "local" and not self.model:
             raise ValueError("FUTURELEDGER_MODEL must be set to the model ID provided by the selected service")
 

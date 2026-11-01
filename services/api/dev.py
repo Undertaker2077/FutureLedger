@@ -1,4 +1,4 @@
-"""Explicit offline development factory; no hardcoded credentials or bank execution."""
+"""Development factory; startup requires an LLM provider and key."""
 
 import os
 
@@ -19,7 +19,7 @@ def create_dev_app():
     kwargs = dict(authenticator=auth, analysis=FixtureAnalysis(ROOT / 'data/benchmark.sqlite'),
                   agent_provider=provider if provider.provider != 'local' else None)
     # Set both variables to opt into the real A↔B demo path. Without them the
-    # offline app stays read-only, which avoids silently creating a bank client.
+    # app remains read-only, which avoids silently creating a bank client.
     bank_url = os.getenv('FUTURELEDGER_BANK_URL')
     bank_token = os.getenv('FUTURELEDGER_BANK_TOKEN')
     if bank_url and bank_token:

@@ -4,9 +4,9 @@
 
 当前分支保留已实现的 C2 显式 DAG、增量重规划和 B 查证入口，详见 [C2 使用与交付说明](../../docs/c2-dag-replanning.md)。启动命令不变，C2 的 0.2.0 契约快照和原 C1 契约快照保持不变。
 
-正式 C 模块的首个可合并版本；不是生产支付系统。原 `demo.api:app` 保持独立可运行。完整设计、差异及 C2–C4 任务见 [交付说明](../../docs/c1-agent-api.md)。
+正式 C 模块的首个可合并版本；不是生产支付系统。原 `demo.api:create_app --factory` 保持独立可运行。完整设计、差异及 C2–C4 任务见 [交付说明](../../docs/c1-agent-api.md)。
 
-## 启动（无需模型密钥）
+## 启动（必须配置模型）
 
 仓库根目录执行，Python 3.10+（本轮 Python 3.12）。使用原有依赖，不新增 Web/数据库服务：
 
@@ -28,7 +28,9 @@ rm -rf "$fixture_dir"
 显式开启开发认证并启动单进程。令牌只保存在当前 shell 环境；不要复制到文件、Git 或聊天。若切换终端，需要通过自己的安全配置重新提供同一个值。
 
 ```bash
-export FUTURELEDGER_PROVIDER=local
+export FUTURELEDGER_PROVIDER=deepseek
+export FUTURELEDGER_API_KEY='YOUR_APIKEY'
+export FUTURELEDGER_MODEL='YOUR_MODEL_NAME'
 export FUTURELEDGER_DEV_TOKEN="$(.venv/bin/python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 .venv/bin/python -m uvicorn services.api.dev:create_dev_app --factory --host 127.0.0.1 --port 8001
 ```
@@ -53,7 +55,7 @@ with httpx.Client(base_url="http://127.0.0.1:8001", trust_env=False,
     assert proposal["execution_available"] is False
 ```
 
-需要真实 LLM 时复用 README 中的 provider 环境变量，开发工厂使用 `ModelPlanner(ChatProvider())`；本轮没有真实模型准确率结果。默认 local 解析是有限规则，支持明确的元金额、ISO/年月日日期、今天/明天、账户 ID、当前目录收款人及代扣名称。未识别的参数必须补充，不能推断为已执行。
+开发工厂使用 `ModelPlanner(ChatProvider())`，启动时必须配置真实模型 provider、API key 和 model。测试中的 Fake Provider 只用于确定性回归，不是用户启动模式。未识别的参数必须补充，不能推断为已执行。
 
 ## API 与前端调用
 
@@ -88,7 +90,7 @@ SSE 前端需用支持 Bearer header 的 fetch 流客户端；不要将 token �
 ## 验证与契约导出
 
 ```bash
-FUTURELEDGER_PROVIDER=local .venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python -m unittest discover -s tests -v
 .venv/bin/python scripts/run_benchmark.py
 node scripts/check_prototype.cjs
 .venv/bin/python -m pip check

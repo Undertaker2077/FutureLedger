@@ -52,7 +52,9 @@ ToolSpec 包含唯一名称、输入/输出模型、模块/版本、能力、适
 仓库根目录，依赖沿用 requirements-demo.txt，不需要新增包。详细安全令牌配置见 `services/api/README.md`：
 
 ```bash
-export FUTURELEDGER_PROVIDER=local
+export FUTURELEDGER_PROVIDER=deepseek  # 或 openai / compatible
+export FUTURELEDGER_API_KEY='YOUR_APIKEY'
+export FUTURELEDGER_MODEL='YOUR_MODEL_NAME'
 export FUTURELEDGER_DEV_TOKEN="$(.venv/bin/python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 .venv/bin/python -m uvicorn services.api.dev:create_dev_app --factory --host 127.0.0.1 --port 8001
 ```
@@ -106,7 +108,7 @@ Mock 测试在同一个显式目标/付款复合图验证工资日修改只重�
 执行：
 
 ```bash
-FUTURELEDGER_PROVIDER=local .venv/bin/python -m unittest discover -s tests -v
+FUTURELEDGER_ALLOW_LOCAL_TESTS=1 FUTURELEDGER_PROVIDER=local .venv/bin/python -m unittest discover -s tests -v
 .venv/bin/python scripts/run_benchmark.py
 node scripts/check_prototype.cjs
 .venv/bin/python -m pip check

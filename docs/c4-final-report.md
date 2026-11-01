@@ -145,7 +145,7 @@ C4 的共享契约变更仅为新增版本 OpenAPI 和 `/api/agent/chat` 可选 
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements-c4.txt
-FUTURELEDGER_PROVIDER=local .venv/bin/python scripts/run_c4_quality.py --output /tmp/futureledger-c4-evidence
+.venv/bin/python scripts/run_c4_quality.py --output /tmp/futureledger-c4-evidence
 ```
 
 需要 Python3.12、Node24；无需真实 LLM Key 或银行服务。runner 会在缺少 ignored SQLite 时安全准备合成 fixture。测试不会提交真实支付。逐测试日志与 summary、coverage、agent-benchmark、unittest JSON 位于输出目录；CI 同样上传这些 artifact。测试环境若限制 TestClient 本地通信，需要环境允许本地测试，不应改测试断言绕过。

@@ -31,7 +31,7 @@ Reproduce:
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements-c4.txt
-FUTURELEDGER_PROVIDER=local .venv/bin/python scripts/run_c4_quality.py --output /tmp/futureledger-c4-evidence
+.venv/bin/python scripts/run_c4_quality.py --output /tmp/futureledger-c4-evidence
 ```
 
 Requires Python3.12 and Node24, synthetic data only; no LLM key or payment service. Remote GitHub Actions NOT_RUN; workflow is added, not represented as a green remote run.

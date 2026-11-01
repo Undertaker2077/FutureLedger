@@ -37,7 +37,9 @@
 依赖及安全生成本地开发令牌步骤沿用 `services/api/README.md`，从仓库根目录启动：
 
 ```bash
-export FUTURELEDGER_PROVIDER=local
+export FUTURELEDGER_PROVIDER=deepseek  # 或 openai / compatible
+export FUTURELEDGER_API_KEY='YOUR_APIKEY'
+export FUTURELEDGER_MODEL='YOUR_MODEL_NAME'
 export FUTURELEDGER_DEV_TOKEN="$(.venv/bin/python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 .venv/bin/python -m uvicorn services.api.dev:create_dev_app --factory --host 127.0.0.1 --port 8001
 ```
@@ -86,7 +88,7 @@ export FUTURELEDGER_DEV_TOKEN="$(.venv/bin/python -c 'import secrets; print(secr
 验证命令：
 
 ```bash
-FUTURELEDGER_PROVIDER=local .venv/bin/python -m unittest discover -s tests -v
+FUTURELEDGER_ALLOW_LOCAL_TESTS=1 FUTURELEDGER_PROVIDER=local .venv/bin/python -m unittest discover -s tests -v
 .venv/bin/python scripts/run_benchmark.py
 node scripts/check_prototype.cjs
 .venv/bin/python -m pip check

@@ -2,7 +2,7 @@
 
 FutureLedger 是一个本地运行的个人账本问答演示。用户用自然语言提问，LLM 将问题分到查询、转账执行、规划或普通对话；查询再转换为受控 IntentPlan，由后端校验并编译只读 SQL。模型不直接编写或执行 SQL。
 
-这个仓库目前提供合成账单、Text2SQL 聊天界面、本地演示转账和确定性的现金流模拟接口。它不会连接银行，也不适合存放真实账单或真实账户凭据。现金流模拟只使用经过校验的计划参数和合成场景，不会写入账本。
+这个仓库目前提供合成账单、基于 LLM 的 Text2SQL 聊天界面、本地演示转账和确定性的现金流模拟接口。启动应用必须配置 LLM provider、API key 和 model；应用不会自动退回 local offline mode。它不会连接真实银行，也不适合存放真实账单或真实账户凭据。
 
 ## 功能
 
@@ -11,7 +11,7 @@ FutureLedger 是一个本地运行的个人账本问答演示。用户用自然�
 - 单值显示数字卡片，排名显示柱状图，时间趋势显示折线图，普通分组显示表格。
 - 演示转账仅在两个合成用户之间进行；需重新输入 FutureLedger 密码，选择用途类别并确认。转出计入所选支出类别，转入计入收入。
 - 查询结果不显示 IntentPlan、SQL 或内部流水 ID。
-- 本地离线模式无需 API key；也支持 OpenAI、DeepSeek，以及支持 OpenAI-compatible Chat Completions JSON mode 的模型服务。
+- 必须使用已配置的 LLM；支持 OpenAI、DeepSeek，以及支持 OpenAI-compatible Chat Completions JSON mode 的模型服务。
 
 完整的实际功能、示范问题、预期结果和回归命令见 [`docs/功能检验清单.md`](docs/功能检验清单.md)。
 
@@ -26,7 +26,10 @@ python3 -m venv .venv
 source .venv/bin/activate
 python3 -m pip install -r requirements-demo.txt
 python3 scripts/generate_data.py
-python3 -m uvicorn demo.api:app --host 127.0.0.1 --port 8000
+export FUTURELEDGER_PROVIDER=deepseek  # 或 openai / compatible
+export FUTURELEDGER_API_KEY='YOUR_APIKEY'
+export FUTURELEDGER_MODEL='YOUR_MODEL_NAME'
+python3 -m uvicorn demo.api:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
 浏览器打开 <http://127.0.0.1:8000>。首次使用时选 **首次设置密码**，为演示用户 `test_user` 或 `isolation_user` 设置密码，然后登录。转账时会再次要求该密码。
@@ -56,20 +59,13 @@ python -m uvicorn mock_bank.api:app --host 127.0.0.1 --port 8001
 
 API key 和模型名称都通过环境变量提供。请在启动 Uvicorn 的同一个终端设置它们；不要把真实 key 写进 Python 文件、README、截图或 Git。`.env.example` 仅供参考，应用不会自动读取该文件。实际 `.env` 已列入 `.gitignore`。
 
-**离线模式**无需设置 key，也不会调用 LLM。它使用有限的本地规则，只适合基本演示：
-
-```bash
-export FUTURELEDGER_PROVIDER=local
-python3 -m uvicorn demo.api:app --host 127.0.0.1 --port 8000
-```
-
 **DeepSeek** 使用服务商控制台提供的 API key 和模型 ID：
 
 ```bash
 export FUTURELEDGER_PROVIDER=deepseek
 export FUTURELEDGER_API_KEY='YOUR_APIKEY'
 export FUTURELEDGER_MODEL='YOUR_MODEL_NAME'
-python3 -m uvicorn demo.api:app --host 127.0.0.1 --port 8000
+python3 -m uvicorn demo.api:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
 把 `YOUR_APIKEY` 和 `YOUR_MODEL_NAME` 换成自己账户可用的值。DeepSeek 的默认 API Base URL 是 `https://api.deepseek.com`。
@@ -80,7 +76,7 @@ python3 -m uvicorn demo.api:app --host 127.0.0.1 --port 8000
 export FUTURELEDGER_PROVIDER=openai
 export FUTURELEDGER_API_KEY='YOUR_APIKEY'
 export FUTURELEDGER_MODEL='YOUR_MODEL_NAME'
-python3 -m uvicorn demo.api:app --host 127.0.0.1 --port 8000
+python3 -m uvicorn demo.api:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
 **其他兼容 OpenAI Chat Completions 的模型服务**（例如提供兼容接口的国产模型服务）：
@@ -90,20 +86,20 @@ export FUTURELEDGER_PROVIDER=compatible
 export FUTURELEDGER_API_KEY='YOUR_APIKEY'
 export FUTURELEDGER_API_BASE='https://YOUR_PROVIDER_BASE_URL/v1'
 export FUTURELEDGER_MODEL='YOUR_MODEL_NAME'
-python3 -m uvicorn demo.api:app --host 127.0.0.1 --port 8000
+python3 -m uvicorn demo.api:create_app --factory --host 127.0.0.1 --port 8000
 ```
 
 `FUTURELEDGER_API_BASE` 填服务商给出的 API 根地址；程序会在末尾追加 `/chat/completions`。模型名称必须填写服务商提供的准确 model ID，代码不会猜测。兼容服务须支持 Chat Completions 格式及 JSON mode（`response_format: json_object`）。如果服务商文档提供不同的 API Base、模型名或 JSON mode 要求，请按其文档设置；不支持该协议的接口目前不能直接使用。
 
 |变量|用途|
 |---|---|
-|`FUTURELEDGER_PROVIDER`|`local`、`deepseek`、`openai` 或 `compatible`|
+|`FUTURELEDGER_PROVIDER`|`deepseek`、`openai` 或 `compatible`；必须设置|
 |`FUTURELEDGER_API_KEY`|该模型服务的 API key|
 |`FUTURELEDGER_MODEL`|服务商提供的模型 ID；启用 LLM 时必填|
 |`FUTURELEDGER_API_BASE`|兼容服务必填；内置 DeepSeek/OpenAI 地址可覆盖|
 |`FUTURELEDGER_TODAY`|可选固定日期，用于重复演示相对日期问题，例如 `2026-10-26`|
 
-每个新终端都需要重新设置环境变量。也可在本机创建 `.env` 保存配置，但需自行通过 shell 加载；不要提交真实 `.env`。
+每个新终端都需要重新设置环境变量。也可在本机创建 `.env` 保存配置，但需自行通过 shell 加载；不要提交真实 `.env`。未设置 provider、API key 或 model 时，应用会在启动阶段直接报错。
 
 ## 可用于演示的问题
 

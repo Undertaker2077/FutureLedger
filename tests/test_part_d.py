@@ -152,7 +152,8 @@ class SimulationApiTests(unittest.TestCase):
         from fastapi import HTTPException
         from demo.api import PlanSimulationRequest, create_app
 
-        app = create_app(db_path=self.db)
+        from demo.provider import ChatProvider
+        app = create_app(db_path=self.db, provider=ChatProvider(provider="local", allow_local=True))
         route = next(route for route in app.routes if route.path == "/api/plans/{plan_id}/simulate")
         request = PlanSimulationRequest.model_validate({**self.base_request, "session_id": "invalid-session"})
 

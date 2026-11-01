@@ -4,6 +4,7 @@ import json
 import tempfile
 import shutil
 import unittest
+from unittest.mock import patch
 from datetime import date
 from pathlib import Path
 
@@ -41,7 +42,7 @@ class DemoTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         source = Path(self.temp.name) / "fixture.sqlite"
         shutil.copy2(DB, source)
-        self.client = TestClient(create_app(db_path=source, today=date(2026, 10, 26)))
+        self.client = TestClient(create_app(db_path=source, provider=ChatProvider(provider="local", allow_local=True), today=date(2026, 10, 26)))
         for user in ("test_user", "isolation_user"):
             response = self.client.post("/api/auth/register", json={"username": user, "password": "test-password-123"})
             self.assertEqual(response.status_code, 200, response.text)
@@ -215,7 +216,7 @@ class DemoTest(unittest.TestCase):
 
     def test_missing_fixture_is_explicit(self):
         with tempfile.TemporaryDirectory() as folder:
-            client = TestClient(create_app(db_path=Path(folder) / "missing.sqlite"))
+            client = TestClient(create_app(db_path=Path(folder) / "missing.sqlite", provider=ChatProvider(provider="local", allow_local=True)))
             self.assertEqual(client.get("/api/health").json()["status"], "fixture_missing")
             self.assertEqual(client.post("/api/sessions", json={"auth_token": "missing"}).status_code, 401)
 
@@ -231,6 +232,16 @@ class DemoTest(unittest.TestCase):
 
 
 class ProviderTest(unittest.IsolatedAsyncioTestCase):
+    def test_startup_requires_explicit_llm_configuration(self):
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaisesRegex(ValueError, "FUTURELEDGER_PROVIDER"):
+                ChatProvider()
+        with patch.dict("os.environ", {"FUTURELEDGER_PROVIDER": "deepseek"}, clear=True):
+            with self.assertRaisesRegex(ValueError, "FUTURELEDGER_API_KEY"):
+                ChatProvider()
+        with self.assertRaisesRegex(ValueError, "test-only"):
+            ChatProvider(provider="local")
+
     async def test_openai_compatible_request_and_response(self):
         observed = {}
 

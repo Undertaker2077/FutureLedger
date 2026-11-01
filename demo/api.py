@@ -416,4 +416,7 @@ def create_app(*, db_path=None, provider=None, today=None):
     return app
 
 
-app = create_app()
+# The production entry point is the factory, so configuration is validated at
+# Uvicorn startup after the user exports an LLM provider, key and model.
+# Tests and embedded callers should pass an explicit provider to create_app().
+app = None

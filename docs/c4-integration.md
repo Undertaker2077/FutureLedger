@@ -55,13 +55,15 @@ SSE 支持当前实例内排序回放及 Last-Event-ID；不存在的未来游�
 
 ## 最小本地运行与请求样例
 
-仅使用合成数据、LocalPlanner 和离线分析；不需 LLM Key。默认 `services.api.app:app` 拒绝所有认证，开发工厂必须显式启用。
+使用合成数据；开发工厂启动必须配置 LLM provider、API key 和 model。默认 `services.api.app:app` 拒绝所有认证，开发工厂必须显式启用。
 
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements-c4.txt
 .venv/bin/python scripts/prepare_c4_fixture.py
-export FUTURELEDGER_PROVIDER=local
+export FUTURELEDGER_PROVIDER=deepseek  # 或 openai / compatible
+export FUTURELEDGER_API_KEY='YOUR_APIKEY'
+export FUTURELEDGER_MODEL='YOUR_MODEL_NAME'
 export FUTURELEDGER_DEV_TOKEN="$(.venv/bin/python -c 'import secrets; print(secrets.token_urlsafe(32))')"
 .venv/bin/uvicorn services.api.dev:create_dev_app --factory --host 127.0.0.1 --port 8765
 ```
@@ -98,14 +100,14 @@ Content-Type: application/json
 ## 可复现质量门
 
 ```bash
-FUTURELEDGER_PROVIDER=local .venv/bin/python scripts/run_c4_quality.py --output /tmp/futureledger-c4-evidence
+.venv/bin/python scripts/run_c4_quality.py --output /tmp/futureledger-c4-evidence
 # 单独复现原有及新增测试
-FUTURELEDGER_PROVIDER=local .venv/bin/python -m unittest discover -s tests -v
+FUTURELEDGER_ALLOW_LOCAL_TESTS=1 FUTURELEDGER_PROVIDER=local .venv/bin/python -m unittest discover -s tests -v
 # 只检查导出漂移
 .venv/bin/python -m services.api.export_contracts --check
 ```
 
-runner 保存分支、SHA、工作区是否有修改、代码 SHA256、UTC 起止、每命令耗时/退出码/日志摘要、逐测试结果和真实覆盖率。覆盖率仅对 services/api；ruff 仅检查未定义名称 F821/F822/F823，不声称完整风格检查或安全扫描。CI 使用 Python3.12、Node24、无真实凭证、local provider、只读内容权限；CI 配置在本地验证，远程 GitHub Actions 执行另行确认。
+runner 保存分支、SHA、工作区是否有修改、代码 SHA256、UTC 起止、每命令耗时/退出码/日志摘要、逐测试结果和真实覆盖率。覆盖率仅对 services/api；ruff 仅检查未定义名称 F821/F822/F823，不声称完整风格检查或安全扫描。CI 使用 Python3.12、Node24、无真实凭证和仅供回归测试的 local provider；这不改变用户启动必须使用真实 LLM 的要求。
 
 `prepare_c4_fixture.py` 在临时目录重建，验证生成文件与发布数据逐字节一致后只复制 Git 忽略的 SQLite。不会通过重写 gold、改动 D 口径或删除测试掩盖错误。
 

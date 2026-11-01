@@ -18,7 +18,9 @@ ROOT=Path(__file__).resolve().parents[1]
 def main():
     parser=argparse.ArgumentParser();parser.add_argument('--output',type=Path,default=Path('/tmp/futureledger-c4-evidence'))
     args=parser.parse_args();out=args.output.resolve();out.mkdir(parents=True,exist_ok=True)
-    env={**os.environ,'FUTURELEDGER_PROVIDER':'local','COVERAGE_FILE':str(out/'.coverage')}
+    # The C4 runner is an offline regression harness only. User-facing startup
+    # still rejects local mode and requires an LLM provider/key/model.
+    env={**os.environ,'FUTURELEDGER_PROVIDER':'local','FUTURELEDGER_ALLOW_LOCAL_TESTS':'1','COVERAGE_FILE':str(out/'.coverage')}
     def git(*args):return subprocess.check_output(['git',*args],cwd=ROOT,text=True).strip()
     report={'started_at_utc':datetime.now(timezone.utc).isoformat(),'branch':git('branch','--show-current'),
             'commit':git('rev-parse','HEAD'),'dirty':bool(git('status','--porcelain')),
