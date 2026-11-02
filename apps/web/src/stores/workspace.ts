@@ -47,6 +47,30 @@ export const useWorkspace = defineStore('workspace', () => {
   const accountError = ref('')
   const totalBalanceCents = computed(() => accounts.value.reduce((total, account) => total + account.balance_cents, 0))
   const authenticated = computed(() => Boolean(authToken.value && username.value && sessionId.value))
+  const mode = ref<'mock' | 'api'>('api')
+  const apiToken = ref('')
+  const minBalance = ref(300000)
+  const salaryDelay = ref(0)
+  const dailyBudget = ref(8000)
+  const tasks = ref([{ id: 'op-demo-1042', title: '视频订阅取消请求', status: '待确认', detail: '请检查操作范围；演示不会连接银行。' }, { id: 'plan-demo-022', title: '新电脑储蓄计划', status: '模拟完成', detail: '已生成本地方案，没有创建转账。' }])
+  const mandates = ref([{ id: 'cloud-drive', merchant: '云盘会员', amount: 25, status: 'ACTIVE', protected: true }, { id: 'video', merchant: '视频会员', amount: 25, status: 'ACTIVE', protected: false }, { id: 'music', merchant: '音乐会员', amount: 15, status: 'ACTIVE', protected: false }])
+  const transactions = ref([{ date: '2026-10-01', merchant: '星巴克咖啡', category: '餐饮', amount: -3600 }, { date: '2026-10-01', merchant: '工资收入', category: '工资', amount: 1860000 }, { date: '2026-09-30', merchant: '网易云音乐', category: '订阅', amount: -1500 }, { date: '2026-09-29', merchant: '地铁出行', category: '交通', amount: -800 }, { date: '2026-09-28', merchant: '超市购物', category: '购物', amount: -12680 }, { date: '2026-09-27', merchant: '退款入账', category: '退款', amount: 3200 }])
+  const activeMandates = computed(() => mandates.value.filter(item => item.status === 'ACTIVE'))
+  function toggleProtected(id: string) { const item = mandates.value.find(entry => entry.id === id); if (item) item.protected = !item.protected }
+  function requestCancel(id: string) { const item = mandates.value.find(entry => entry.id === id); if (item) tasks.value.unshift({ id: `cancel-${Date.now()}`, title: `取消${item.merchant}`, status: '待确认', detail: '本地演示请求；真正取消需要执行门和银行适配器。' }) }
+  function approveDemoTask(id: string) { const item = tasks.value.find(entry => entry.id === id); if (item) item.status = '已确认（演示）' }
+  function simulateDemo() {
+    let balance = 4_285_632; let minimum = balance; let minimumDay = 1
+    const days: Array<{ day: number; balance: number }> = []
+    for (let day = 1; day <= 30; day += 1) {
+      if (day === 15 + salaryDelay.value) balance += 1_860_000
+      balance -= dailyBudget.value
+      if (day === 20) balance -= 680_000
+      if (balance < minimum) { minimum = balance; minimumDay = day }
+      days.push({ day, balance })
+    }
+    return { days, min: minimum, minDay: minimumDay, feasible: minimum >= minBalance.value }
+  }
 
   function clearLocalSession() {
     generation += 1
@@ -146,5 +170,5 @@ export const useWorkspace = defineStore('workspace', () => {
   async function simulate(planId: string, body: Record<string, number>) {
     return api<{ result: Record<string, unknown>; status: string }>(`/api/plans/${planId}/simulate`, { method: 'POST', body: JSON.stringify({ session_id: sessionId.value, plan_version: 1, ...body }) })
   }
-  return { username, sessionId, messages, loading, error, authLoading, pendingAction, authenticated, accounts, accountError, totalBalanceCents, refreshAccounts, register, login, logout, send, authorizeAction, confirmAction, simulate }
+  return { username, sessionId, messages, loading, error, authLoading, pendingAction, authenticated, accounts, accountError, totalBalanceCents, refreshAccounts, register, login, logout, send, authorizeAction, confirmAction, simulate, simulateDemo, mode, apiToken, minBalance, salaryDelay, dailyBudget, tasks, mandates, transactions, activeMandates, toggleProtected, requestCancel, approveDemoTask }
 })

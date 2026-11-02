@@ -1,0 +1,4 @@
+<script setup lang="ts">
+import { useWorkspace } from '../stores/workspace';const ws=useWorkspace()
+</script>
+<template><div class="page-intro"><div><span class="eyebrow">MANDATE MANAGEMENT</span><h1>代扣管理</h1><p>查看授权、设置保护项；取消只创建待确认任务，不会直接执行。</p></div><span class="mode-pill mock"><i></i>合成数据</span></div><div class="mandate-list"><article v-for="m in ws.activeMandates" :key="m.id" class="card mandate-row"><div class="merchant-icon">{{m.merchant.slice(0,1)}}</div><div class="mandate-info"><b>{{m.merchant}}</b><small>每月扣款 · ¥{{m.amount.toFixed(2)}} · 授权 {{m.id}}</small></div><label class="protect-toggle"><input type="checkbox" :checked="m.protected" @change="ws.toggleProtected(m.id)"><span>保护</span></label><button class="secondary-button" @click="ws.requestCancel(m.id)">发起取消</button></article></div><div class="notice">取消银行代扣不等于解除商户合同。受保护授权需先处理保护范围；所有状态均为演示态。</div></template>

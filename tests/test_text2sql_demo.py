@@ -210,6 +210,7 @@ class DemoTest(unittest.TestCase):
         self.assertEqual(len(second["rows"]), 5)
 
     def test_transfer_requires_password_then_category_and_counts_as_inflow_outflow(self):
+        expense_before = self.ask("本月支出")["rows"][0]["value_cents"]
         preview = self.ask("给测试用户B转 25 元")
         self.assertEqual(preview["status"], "confirmation_required")
         action_id = preview["action_id"]
@@ -230,6 +231,10 @@ class DemoTest(unittest.TestCase):
         self.assertIn("购物", done.json()["message"])
         outgoing = self.client.post("/api/ask", json={"session_id": self.session, "question": "本月的支出明细"}).json()
         incoming = self.client.post("/api/ask", json={"session_id": recipient_session, "question": "本月的收入明细"}).json()
+        expense_after = self.ask("本月支出")["rows"][0]["value_cents"]
+        recipient_income = self.client.post("/api/ask", json={"session_id": recipient_session, "question": "本月收入"}).json()
+        self.assertEqual(expense_after - expense_before, 2500)
+        self.assertEqual(recipient_income["rows"][0]["value_cents"], 2500)
         self.assertTrue(any(r["kind"] == "transfer" and r["category"] == "购物" and r["direction"] == "OUT" for r in outgoing["rows"]))
         self.assertTrue(any(r["kind"] == "transfer" and r["direction"] == "IN" for r in incoming["rows"]))
 

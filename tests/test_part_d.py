@@ -96,7 +96,7 @@ class AnalyticsBoundaryTests(unittest.TestCase):
         self.assertEqual(result["rows"], [{"value_cents": sum(row[1] for row in expected)}])
         self.assertEqual(result["evidence_ids"], [row[0] for row in expected])
 
-    def test_income_excludes_refund_and_internal_transfer(self):
+    def test_income_excludes_outgoing_transfer(self):
         from demo.query import Ledger
 
         result = Ledger(self.db).execute(self._plan(metric="income", category="转账"), "test_user")

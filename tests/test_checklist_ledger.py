@@ -66,7 +66,8 @@ class ChecklistLedgerTests(unittest.TestCase):
             ("gross_expense", 1800, ["0", "4", "5"]),
             ("net_expense", 1700, ["0", "4", "5", "7"]),
             ("income", 2700, ["2", "6"]),
-            ("avg_expense", 1000.0, ["0"]),
+            ("avg_expense", 600.0, ["0", "4", "5"]),
+            ("transaction_count", 5, ["0", "4", "5", "6", "7"]),
         ]:
             with self.subTest(metric=metric):
                 result = self.run_plan(metric)
