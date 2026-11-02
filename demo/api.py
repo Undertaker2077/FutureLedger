@@ -98,7 +98,7 @@ def verify_password(password: str, encoded: str):
 def display_value(value, metric):
     if value is None:
         return "没有可计算的消费记录"
-    if metric in {"transaction_count", "transfer_count"}:
+    if metric in {"transaction_count", "transfer_count", "activity_count"}:
         return f"{int(value)} 笔"
     return f"¥{value / 100:,.2f}"
 
@@ -136,6 +136,28 @@ def requested_balance_account(question: str):
         return False, None
     wants_savings = re.search(r"储蓄|存款|savings|acc_savings", q, re.I)
     wants_daily = re.search(r"主账户|日常账户|活期|acc_daily", q, re.I)
+    # A balance shortcut may only broaden to all accounts when no named
+    # account was requested. Unknown names must not silently lose their scope.
+    generic_words = (
+        'acc_savings', 'acc_daily', 'acc_other', '储蓄账户', '主账户', '日常账户',
+        '演示账户', '储蓄', '存款', '活期', 'savings', 'accounts', 'account',
+        'balance', 'total', 'list', 'how much', 'my', 'show', 'what is', 'me',
+        '主', '日常', '演示', '能告诉', '告诉', '能否', '可以', '麻烦', '显示',
+        '多少钱', '多少余额', '多少个', '几个', '哪些', '各自', '分别', '银行账户',
+        '账户列表', '账户信息', '银行卡', '账户', '总余额', '余额', '金额',
+        '剩下多少钱', '剩多少钱', '还有多少钱', '剩下多少', '剩多少', '还有多少', '是多少', '有多少', '请问',
+        '帮我', '查询', '查看', '我的', '银行', '列表', '信息', '总共',
+        '合计', '全部', '所有', '当前', '现在', '多少', '请', '我', '有',
+        '和', '的', '是', '呢', '吗', '张', '个',
+    )
+    mentions = re.findall(r'([a-z0-9\u4e00-\u9fff_ ]*?)(?:账户|银行卡|卡|余额|accounts?\b|balance\b)', q)
+    for remainder in mentions:
+        for word in sorted(generic_words, key=len, reverse=True):
+            remainder = remainder.replace(word, '')
+        if re.search(r'[a-z0-9\u4e00-\u9fff_]', remainder):
+            return True, '__unknown_account__'
+    if 'acc_other' in q or '演示账户' in q:
+        return True, 'acc_other'
     if wants_savings and wants_daily:
         return True, None
     if wants_savings:
@@ -160,9 +182,11 @@ def account_snapshot_payload(ledger: Ledger, user: str, account_id: str | None =
     return rows, answer
 
 
-def simulate_plan_payload(plan_id: str, request: PlanSimulationRequest, *, user_id: str) -> dict[str, object]:
+def simulate_plan_payload(plan_id: str, request: PlanSimulationRequest, *, user_id: str,
+                          opening_balance_cents: int = 900000) -> dict[str, object]:
     """Build a deterministic simulation response without changing ledger state."""
     result = simulate_cashflow(
+        opening_balance_cents=opening_balance_cents,
         salary_day=request.salary_day,
         purchase_day=request.purchase_day,
         daily_budget_cents=request.daily_budget_cents,
@@ -294,7 +318,19 @@ def create_app(*, db_path=None, provider=None, today=None):
         if user is None:
             raise HTTPException(403, {"code": "FORBIDDEN", "message": "无效或已失效的演示会话"})
         try:
-            return simulate_plan_payload(plan_id, request, user_id=user)
+            accounts = sorted(ledger.account_snapshot(user), key=lambda row: row['account_id'])
+            if not accounts:
+                raise QueryError('ACCOUNT_NOT_FOUND', '当前用户没有可用于模拟的账户。')
+            payload = simulate_plan_payload(plan_id, request, user_id=user,
+                opening_balance_cents=accounts[0]['balance_cents'])
+            payload['assumptions'] = [
+                f"使用当前授权主账户（{accounts[0]['account_name']}）余额，未合并其他账户。",
+                '固定合成事件：房租3500元、云存储30元、视频订阅68元、工资8000元；不是历史预测。',
+                '金额、日期和预算仅用于情景模拟，不执行转账。',
+            ]
+            return payload
+        except QueryError as exc:
+            raise HTTPException(422, {'code': exc.code, 'message': str(exc)}) from exc
         except ValueError as exc:
             raise HTTPException(422, {"code": "INVALID_SIMULATION", "message": str(exc)}) from exc
 
@@ -451,11 +487,11 @@ def create_app(*, db_path=None, provider=None, today=None):
         queries[query_id] = {"session_id": request.session_id, "rows": rows,
                            'group_label': GROUPS.get(plan.group_by, '项目'),
                            'series_label': GROUPS.get(plan.series_by, '系列'),
-                           'value_format': 'count' if plan.metric in {'transaction_count', 'transfer_count'} else 'money'}
+                           'value_format': 'count' if plan.metric in {'transaction_count', 'transfer_count', 'activity_count'} else 'money'}
         return {
             "status": "answer", "route": "query", "answer": answer, "rows": rows,
             "chart": 'bar' if comparison else chart_for(plan, effective_question),
-            "value_format": "count" if plan.metric in {"transaction_count", "transfer_count"} else "money",
+            "value_format": "count" if plan.metric in {"transaction_count", "transfer_count", "activity_count"} else "money",
             "query_id": query_id,
             'group_label': GROUPS.get(plan.group_by, '项目'),
             'series_label': GROUPS.get(plan.series_by, '系列'),

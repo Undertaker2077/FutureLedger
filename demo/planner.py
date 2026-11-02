@@ -161,7 +161,10 @@ def local_plan(question: str, today: date, merchants: tuple[str, ...]):
     else:
         return {"route": "clarification", "message": "请说明查询日期，例如‘2026 年 9 月’或‘最近 30 天’。"}
 
-    category = next((c for c in CATEGORIES if c in q), None)
+    # “转账” normally names a transaction type, independently of purpose.
+    category = next((c for c in CATEGORIES if c != "转账" and c in q), None)
+    if category is None and re.search(r"(?:类别|分类|用途)(?:为|是|[:：])[‘'\"“]?转账", q):
+        category = "转账"
     merchant = next((m for m in merchants if m in q), None)
     explicit_merchant = re.search(r"(?:商户|商家)[是为：:]?\s*([^\s，,。！？!?]+)", q)
     if explicit_merchant and merchant is None and not any(w in q for w in ("各商户", "按商户", "商户排名", "商户排行")):
@@ -172,7 +175,7 @@ def local_plan(question: str, today: date, merchants: tuple[str, ...]):
         metric = "avg_transfer" if "转账" in q else "avg_expense"
     elif "转账" in q and "收入" in q:
         metric = "transfer_income"
-    elif "转账" in q and not any(w in q for w in ("消费", "支出")):
+    elif "转账" in q:
         metric = "transfer_count" if any(w in q for w in ("笔数", "多少笔", "几笔")) else "transfer_amount"
     elif "退款" in q and "净" not in q:
         metric = "refund"
@@ -185,7 +188,7 @@ def local_plan(question: str, today: date, merchants: tuple[str, ...]):
     elif "支出" in q or "花" in q or "消费" in q:
         metric = "gross_expense"
     elif latest:
-        metric = "transaction_count"
+        metric = "activity_count"
     else:
         return {"route": "clarification", "message": "请说明指标：消费支出、净支出、退款、收入、笔数或平均每笔消费？"}
 

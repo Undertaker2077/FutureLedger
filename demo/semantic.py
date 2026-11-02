@@ -14,6 +14,7 @@ METRICS = {
     "net_expense": "净支出",
     "income": "收入",
     "transaction_count": "流水笔数",
+    "activity_count": "全部交易笔数",
     "avg_expense": "平均每笔支出",
     "transfer_amount": "转账金额",
     "transfer_count": "转出笔数",
@@ -26,6 +27,7 @@ METRIC_DEFINITIONS = {
     "net_expense": "已入账 expense/OUT 和 transfer/OUT 金额之和，减去同一日期范围内 refund/IN 退款",
     "income": "已入账 income/IN 和 transfer/IN 金额之和，不含退款",
     "transaction_count": "已入账消费出账、退款入账和转账流水的条数",
+    "activity_count": "全部已入账有效流水：消费出账、收入入账、退款入账及双向转账；最近交易明细使用此口径",
     "avg_expense": "已入账 expense/OUT 与 transfer/OUT 金额之和除以对应出账笔数；无出账时为空值",
     "transfer_amount": "已入账 transfer/OUT 金额之和；可按选定用途类别统计",
     "transfer_count": "已入账 transfer/OUT 转出流水的条数",
@@ -47,7 +49,7 @@ class IntentPlan(BaseModel):
     kind: Literal["aggregate", "detail"]
     dataset_id: Literal["personal_ledger"]
     semantic_version: Literal[1]
-    metric: Literal["gross_expense", "refund", "net_expense", "income", "transaction_count", "avg_expense", "transfer_amount", "transfer_count", "transfer_income", "avg_transfer"]
+    metric: Literal["gross_expense", "refund", "net_expense", "income", "transaction_count", "activity_count", "avg_expense", "transfer_amount", "transfer_count", "transfer_income", "avg_transfer"]
     start: date
     end_exclusive: date
     filters: Filters = Field(default_factory=Filters)

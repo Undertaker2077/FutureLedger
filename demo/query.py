@@ -9,6 +9,7 @@ from pathlib import Path
 from .semantic import CATEGORIES, IntentPlan
 
 AMOUNT = {
+    "activity_count": "COUNT(*)",
     "gross_expense": "COALESCE(SUM(CASE WHEN kind IN ('expense','transfer') AND direction='OUT' THEN amount_cents ELSE 0 END),0)",
     "refund": "COALESCE(SUM(CASE WHEN kind='refund' AND direction='IN' THEN amount_cents ELSE 0 END),0)",
     "net_expense": "COALESCE(SUM(CASE WHEN kind IN ('expense','transfer') AND direction='OUT' THEN amount_cents WHEN kind='refund' AND direction='IN' THEN -amount_cents ELSE 0 END),0)",
@@ -23,6 +24,7 @@ AMOUNT = {
 GROUP = {"category": "category", "merchant": "merchant", "month": "substr(posted_at,1,7)", "account": "account_id"}
 # One predicate governs values and evidence, including direction.
 PREDICATES = {
+    "activity_count": "((kind='expense' AND direction='OUT') OR (kind IN ('income','refund') AND direction='IN') OR (kind='transfer' AND direction IN ('IN','OUT')))",
     "gross_expense": "(kind IN ('expense','transfer') AND direction='OUT')",
     "net_expense": "((kind IN ('expense','transfer') AND direction='OUT') OR (kind='refund' AND direction='IN'))",
     "income": "(kind IN ('income','transfer') AND direction='IN')",

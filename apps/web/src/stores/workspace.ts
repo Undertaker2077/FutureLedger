@@ -168,7 +168,7 @@ export const useWorkspace = defineStore('workspace', () => {
     return response
   }
   async function simulate(planId: string, body: Record<string, number>) {
-    return api<{ result: Record<string, unknown>; status: string }>(`/api/plans/${planId}/simulate`, { method: 'POST', body: JSON.stringify({ session_id: sessionId.value, plan_version: 1, ...body }) })
+    return api<{ result: Record<string, unknown>; status: string; assumptions?: string[] }>(`/api/plans/${planId}/simulate`, { method: 'POST', body: JSON.stringify({ session_id: sessionId.value, plan_version: 1, ...body }) })
   }
   return { username, sessionId, messages, loading, error, authLoading, pendingAction, authenticated, accounts, accountError, totalBalanceCents, refreshAccounts, register, login, logout, send, authorizeAction, confirmAction, simulate, simulateDemo, mode, apiToken, minBalance, salaryDelay, dailyBudget, tasks, mandates, transactions, activeMandates, toggleProtected, requestCancel, approveDemoTask }
 })

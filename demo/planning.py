@@ -10,7 +10,7 @@ from .cashflow import CashflowResult, simulate_cashflow
 
 class Parameters(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    goal_cents: int | None = Field(default=None, ge=1, le=100_000_000)
+    goal_cents: int | None = Field(default=None, ge=0, le=100_000_000)
     floor_cents: int | None = Field(default=None, ge=0, le=100_000_000)
     daily_budget_cents: int | None = Field(default=None, ge=0, le=1_000_000)
     salary_delay_days: int | None = Field(default=None, ge=0, le=15)
@@ -49,21 +49,33 @@ def _simulate_recurring(**parameters):
     """Repeat the engine's synthetic obligations in 30-day cycles, buy once."""
     days = parameters["days"]
     if days == 30:
-        return simulate_cashflow(**parameters)
+        result = simulate_cashflow(**parameters)
+        if parameters["goal_cents"] == 0:
+            return CashflowResult(
+                result.points_cents,
+                result.min_balance_cents,
+                result.min_day,
+                result.feasible,
+                result.conflicts,
+                result.assumptions,
+                tuple(e for e in result.events if e["source"] != "computer_goal"),
+            )
+        return result
     template = simulate_cashflow(**{**parameters, "days": 30, "purchase_day": 1})
     events = []
     for offset in range(0, days, 30):
         for event in template.events:
             if event["source"] != "computer_goal":
                 events.append({**event, "day": int(event["day"]) + offset})
-    events.append(
-        {
-            "day": parameters["purchase_day"],
-            "signed_cents": -parameters["goal_cents"],
-            "source": "computer_goal",
-            "assumption": True,
-        }
-    )
+    if parameters["goal_cents"]:
+        events.append(
+            {
+                "day": parameters["purchase_day"],
+                "signed_cents": -parameters["goal_cents"],
+                "source": "computer_goal",
+                "assumption": True,
+            }
+        )
     events.sort(key=lambda event: int(event["day"]))
     balance = parameters["opening_balance_cents"]
     points = []
@@ -117,7 +129,24 @@ async def build_chat_plan(question, ledger, user, provider, previous=None):
             values = Parameters.model_validate(raw).model_dump(exclude_none=True)
         else:
             values = _local_parameters(question)
+        # Explicit balance-only requests override both continuation and model guesses.
+        pure_projection = bool(
+            re.search(r"不(?:购买|买)|无需(?:购买|买)|不设购买目标", question)
+            or (
+                re.search(r"(?:模拟|预测|预估).*余额", question)
+                and not re.search(r"购买|买|目标|存\s*\d|攒", question)
+            )
+        )
+        if provider is not None and provider.provider != "local":
+            # Deterministic explicit amounts/dates take precedence over model extraction.
+            values.update(_local_parameters(question))
         context.update(values)
+        if (
+            pure_projection
+            or "goal_cents" not in context
+            and not re.search(r"买|购买|目标|存|攒", question)
+        ):
+            context["goal_cents"] = 0
     except (ValidationError, ValueError):
         return {
             "status": "clarification",
@@ -137,6 +166,10 @@ async def build_chat_plan(question, ledger, user, provider, previous=None):
     days = context.get("horizon_days", 30)
     if days not in (30, 90):
         return clarify("当前演示支持30天或90天合成情景，请选择其中一种期限。")
+    projection = context.get("goal_cents") == 0
+    default_floor = projection and "floor_cents" not in context
+    if projection:
+        context.setdefault("floor_cents", 0)
     if "goal_cents" not in context or "floor_cents" not in context:
         return clarify(
             "请补充购买目标金额和最低保留余额，例如目标6000元、至少留3000元；演示支持未来30天或90天的情景比较。"
@@ -154,16 +187,16 @@ async def build_chat_plan(question, ledger, user, provider, previous=None):
     opening = account["balance_cents"]
     if opening < 0:
         return clarify("当前账户余额为负，演示模拟暂不支持这种起始余额。")
-    kwargs = dict(
-        opening_balance_cents=opening,
-        floor_cents=context["floor_cents"],
-        goal_cents=context["goal_cents"],
-        daily_budget_cents=context.get("daily_budget_cents", 8000),
-        salary_day=15 + context.get("salary_delay_days", 0),
-        days=days,
-    )
+    kwargs = {
+        "opening_balance_cents": opening,
+        "floor_cents": context["floor_cents"],
+        "goal_cents": context["goal_cents"],
+        "daily_budget_cents": context.get("daily_budget_cents", 8000),
+        "salary_day": 15 + context.get("salary_delay_days", 0),
+        "days": days,
+    }
     scenarios = []
-    for name, purchase_day, budget in [
+    choices = [
         ("现在购买", 1, kwargs["daily_budget_cents"]),
         ("期末购买", days, kwargs["daily_budget_cents"]),
         (
@@ -171,18 +204,28 @@ async def build_chat_plan(question, ledger, user, provider, previous=None):
             days,
             max(0, kwargs["daily_budget_cents"] - 2000),
         ),
-    ]:
+    ]
+    if projection:
+        choices = [
+            ("余额模拟", 1, kwargs["daily_budget_cents"]),
+            ("减少每日预算20元", 1, max(0, kwargs["daily_budget_cents"] - 2000)),
+        ]
+    for name, purchase_day, budget in choices:
         params = {**kwargs, "purchase_day": purchase_day, "daily_budget_cents": budget}
         scenarios.append(
             {"name": name, "result": _simulate_recurring(**params).to_dict()}
         )
-    earliest = next(
-        (
-            day
-            for day in range(1, days + 1)
-            if _simulate_recurring(**kwargs, purchase_day=day).feasible
-        ),
-        None,
+    earliest = (
+        None
+        if projection
+        else next(
+            (
+                day
+                for day in range(1, days + 1)
+                if _simulate_recurring(**kwargs, purchase_day=day).feasible
+            ),
+            None,
+        )
     )
     assumptions = [
         f"以排序后的第一个授权账户（{account['account_name']}）作为主账户，使用当前余额；未合并其他账户。",
@@ -191,18 +234,29 @@ async def build_chat_plan(question, ledger, user, provider, previous=None):
         "房租、订阅与工资每30天周期重复；这是合成30天周期，并非真实日历月份或历史流水预测；购买目标只发生一次。",
         "购买金额和最低余额来自你的输入；这里只比较情景，不执行转账，也不保证实际购买日期。",
     ]
+    if projection:
+        assumptions[-2] = (
+            "房租、订阅与工资每30天周期重复；这是合成30天周期，并非真实日历月份或历史流水预测。"
+        )
+        assumptions[-1] = (
+            "本次不含购买支出；最低保留余额未指定，默认0元。"
+            if default_floor
+            else "本次不含购买支出；最低保留余额使用已明确的约束。"
+        ) + "这里只模拟余额，不修改账本或执行转账。"
     return {
         "status": "simulated",
         "route": "planning",
         "message": f"已按当前主账户余额运行未来{days}天合成情景比较。在上述假设下，"
         + (
-            f"最早可在第{earliest}天购买。"
+            "本次仅模拟余额，不含购买支出。"
+            if projection
+            else f"最早可在第{earliest}天购买。"
             if earliest
             else "本期限内没有满足最低余额要求的购买日期。"
         )
         + "请先查看假设；结果不是实际日期预测。",
         "earliest_purchase_day": earliest,
-        "result": scenarios[1]["result"],
+        "result": scenarios[0 if projection else 1]["result"],
         "scenarios": scenarios,
         "assumptions": assumptions,
         "_planning_context": context,
